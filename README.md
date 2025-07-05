@@ -1,130 +1,99 @@
-# Fireballz Multiplayer Wizard Game
+# Fireballz - Multiplayer Wizard Battle Game
 
-A real-time multiplayer wizard game where players cast fireballs, collect coins, and compete against AI bots and other players!
+A real-time multiplayer wizard battle game where players shoot fireballs, collect coins, and fight bots and other players!
 
 ## Features
 
-🎮 **Multiplayer Gameplay:**
-- Real-time multiplayer with WebSocket connections
-- Multiple players can join simultaneously
-- See other players moving and casting spells in real-time
-- Competitive coin collection and combat
+- 🧙‍♂️ **Multiplayer battles** - Fight other players in real-time
+- 🔥 **Fireball combat** - Shoot fireballs with 360-degree aiming
+- 🪙 **Coin collection** - Collect coins to level up and reduce cooldowns
+- 🤖 **Bot enemies** - AI wizards that move, shoot, and collect coins
+- ⚡ **Teleport ability** - Quick movement with cooldown
+- 📈 **Level progression** - Get bigger and stronger as you collect coins
+- 🎯 **Precise aiming** - Mouse-based aiming system
+- 🌍 **Large world** - Explore a massive 3000x2250 pixel world
 
-🧙‍♂️ **Wizard Features:**
-- **Movement:** WASD or Arrow Keys
-- **Fireball Casting:** Spacebar to shoot
-- **Mouse Aiming:** Point and shoot with mouse
-- **Teleportation:** C key (with cooldown)
-- **Leveling:** Collect coins to grow stronger
-- **Health System:** Take damage from bot fireballs
+## Controls
 
-🤖 **AI Bots:**
-- Intelligent bot wizards that collect coins
-- Bots attack players when in range
-- Bots drop coins when defeated
-- Dynamic bot spawning system
+- **WASD / Arrow Keys**: Move
+- **Mouse**: Aim direction
+- **Spacebar**: Shoot fireball
+- **C**: Teleport (with cooldown)
 
-## Setup Instructions
+## Local Development
 
-### Prerequisites
-- Node.js (version 14 or higher)
-- npm (comes with Node.js)
-
-### Installation
-
-1. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-2. **Start the server:**
-   ```bash
-   npm start
-   ```
-   
-   Or use the batch file:
-   ```bash
-   start-server.bat
-   ```
-
-3. **Access the game:**
-   - Open `http://localhost:3000` in your browser
-   - The multiplayer game will load automatically
-   - Multiple browser tabs/windows can be used to test multiplayer
-
-## How to Play
-
-### Controls
-- **WASD/Arrow Keys:** Move your wizard
-- **Mouse:** Aim fireball direction
-- **Spacebar:** Cast fireball
-- **C:** Teleport (with cooldown)
-
-### Gameplay
-1. **Collect coins** to level up and grow stronger
-2. **Shoot fireballs** at AI bots to defeat them
-3. **Avoid bot fireballs** - they can damage you
-4. **Use teleport** strategically to escape or reposition
-5. **Compete** with other players for coins and survival
-
-### Multiplayer Features
-- **Real-time Updates:** See other players moving and casting spells
-- **Player Count:** View how many players are currently online
-- **Connection Status:** Monitor your connection to the server
-- **Cross-platform:** Works on any device with a web browser
-
-## Network Access
-
-The server is configured to be accessible on your local network:
-
-- **Local access:** `http://localhost:3000`
-- **Network access:** `http://[YOUR_IP]:3000`
-
-Other devices on your network can join using your computer's IP address!
-
-## Game Files
-
-- `server.js` - Node.js server with WebSocket support
-- `multiplayer.html` - Client-side multiplayer game (enhanced with all features)
-- `package.json` - Dependencies and scripts
-- `start-server.bat` - Windows startup script
-
-## Server Features
-
-- **WebSocket Server:** Real-time bidirectional communication
-- **Player Management:** Track connected players and their states
-- **Game Logic:** Server-side collision detection and bot AI
-- **Auto-reconnection:** Clients automatically reconnect if disconnected
-- **Network Access:** Accessible from any device on your local network
-
-## Development
-
-### Running in Development Mode
+1. Install dependencies:
 ```bash
-npm run dev
+npm install
 ```
-This uses nodemon to automatically restart the server when files change.
 
-### Testing Multiplayer
-1. Start the server
-2. Open multiple browser tabs to `http://localhost:3000`
-3. Each tab represents a different player
-4. Move around and cast spells to see real-time multiplayer interaction
+2. Start the server:
+```bash
+npm start
+```
+
+3. Open your browser to `http://localhost:3000`
+
+## Online Deployment
+
+### Option 1: Railway (Recommended)
+
+1. Create a Railway account at [railway.app](https://railway.app)
+2. Install Railway CLI: `npm i -g @railway/cli`
+3. Login: `railway login`
+4. Deploy: `railway up`
+5. Your game will be available at the provided URL
+
+### Option 2: Render
+
+1. Create a Render account at [render.com](https://render.com)
+2. Connect your GitHub repository
+3. Create a new Web Service
+4. Set build command: `npm install`
+5. Set start command: `npm start`
+6. Deploy and get your URL
+
+### Option 3: Heroku
+
+1. Create a Heroku account
+2. Install Heroku CLI
+3. Run these commands:
+```bash
+heroku create your-game-name
+git add .
+git commit -m "Deploy multiplayer game"
+git push heroku main
+```
+
+## Multiplayer Setup
+
+Once deployed, anyone can join your game by visiting the URL. The game supports:
+
+- **Real-time multiplayer** - Up to 10+ players simultaneously
+- **Shared world** - All players see the same coins, bots, and fireballs
+- **PvP combat** - Players can shoot and damage each other
+- **Cross-platform** - Works on any device with a web browser
+
+## Game Mechanics
+
+- **Leveling**: Collect 10 coins to level up (increases size and damage)
+- **Health**: Players have 100 HP, bots have 2 HP
+- **Fireballs**: Damage scales with player level
+- **Teleport**: 3-second cooldown, reduced by collecting coins
+- **Shooting**: 200ms cooldown between shots
+- **Bots**: Move around, shoot every second, and collect coins
 
 ## Technical Details
 
-- **Backend:** Node.js with Express and WebSocket
-- **Frontend:** HTML5 Canvas with JavaScript
-- **Communication:** WebSocket for real-time updates
-- **Game Loop:** 60 FPS server-side updates
-- **World Size:** 2000x1500 pixels
-- **Max Players:** Unlimited (limited by server resources)
+- **Backend**: Node.js with Express and WebSocket
+- **Frontend**: HTML5 Canvas with JavaScript
+- **Real-time**: WebSocket connections for instant updates
+- **Scalable**: Can handle multiple concurrent players
 
-## Troubleshooting
+## Contributing
 
-- **Connection Issues:** Check that the server is running on port 3000
-- **Performance:** Close unused browser tabs to reduce server load
-- **Reconnection:** The client automatically reconnects every 3 seconds if disconnected
-- **Network Access:** Make sure your firewall allows connections on port 3000
+Feel free to submit issues and enhancement requests!
 
-Enjoy the magical multiplayer experience! 🧙‍♂️✨ 
+## License
+
+MIT License - feel free to use this code for your own projects! 
