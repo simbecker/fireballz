@@ -1,0 +1,1243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wizard Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            position: relative;
+            border: 3px solid #4a90e2;
+            border-radius: 10px;
+            box-shadow: 0 0 30px rgba(74, 144, 226, 0.5);
+        }
+        
+        #gameCanvas {
+            display: block;
+            background: #0f1419;
+        }
+        
+        #instructions {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: #ffffff;
+            font-size: 14px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 100;
+        }
+        
+        #instructions div {
+            margin: 2px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="instructions">
+            <div>🧙‍♂️ WASD or Arrow Keys: Move</div>
+            <div>🔥 Spacebar: Shoot Fireball</div>
+            <div>🎯 Mouse: Aim Direction</div>
+            <div>⚡ C: Teleport (cooldown)</div>
+            <div>🪙 Coins reduce teleport cooldown!</div>
+            <div>🤖 Bot wizards compete for coins and attack you!</div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game world dimensions (larger than screen)
+        const WORLD_WIDTH = 2000;
+        const WORLD_HEIGHT = 1500;
+        
+        // Camera system
+        const camera = {
+            x: 0,
+            y: 0,
+            width: canvas.width,
+            height: canvas.height,
+            
+            follow(target) {
+                this.x = target.x - this.width / 2;
+                this.y = target.y - this.height / 2;
+                
+                // Keep camera within world bounds
+                this.x = Math.max(0, Math.min(this.x, WORLD_WIDTH - this.width));
+                this.y = Math.max(0, Math.min(this.y, WORLD_HEIGHT - this.height));
+            }
+        };
+        
+        // Player wizard
+        const player = {
+            x: WORLD_WIDTH / 2,
+            y: WORLD_HEIGHT / 2,
+            width: 32,
+            height: 32,
+            baseWidth: 32,
+            baseHeight: 32,
+            speed: 4,
+            minSpeed: 2,
+            health: 100,
+            maxHealth: 100,
+            mana: 100,
+            direction: 0, // angle in radians
+            coins: 0,
+            level: 1,
+            coinsToNextLevel: 10,
+            fireballSize: 12,
+            teleportCooldown: 0,
+            teleportMaxCooldown: 180, // 3 seconds at 60fps
+            teleportDistance: 120,
+            alive: true,
+            
+            levelUp() {
+                this.level++;
+                this.coinsToNextLevel += 10;
+                // Logarithmic scaling: starts with doubling, then levels off
+                const scaleFactor = 1 + Math.log(this.level) * 0.8;
+                this.width = this.baseWidth * scaleFactor;
+                this.height = this.baseHeight * scaleFactor;
+                // Fireball size follows the same scaling
+                this.fireballSize = 12 * scaleFactor;
+                // Decrease speed, but not below minSpeed
+                this.speed = Math.max(this.minSpeed, this.speed - 0.3);
+            },
+            
+            draw() {
+                const screenX = this.x - camera.x;
+                const screenY = this.y - camera.y;
+                const scaleFactor = 1 + Math.log(this.level) * 0.8;
+                ctx.save();
+                ctx.translate(screenX + this.width/2, screenY + this.height/2);
+                // Shadow
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.beginPath();
+                ctx.ellipse(0, 20, 18 * scaleFactor, 6 * scaleFactor, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Main body (circle)
+                ctx.fillStyle = '#4a0080';
+                ctx.beginPath();
+                ctx.arc(0, 0, 16 * scaleFactor, 0, Math.PI * 2);
+                ctx.fill();
+                // Body outline
+                ctx.strokeStyle = '#2a0050';
+                ctx.lineWidth = 2 * scaleFactor;
+                ctx.stroke();
+                // Direction indicator - front part of robe
+                ctx.fillStyle = '#6a00b0';
+                ctx.beginPath();
+                ctx.ellipse(Math.cos(this.direction) * 6, Math.sin(this.direction) * 6, 8 * scaleFactor, 12 * scaleFactor, this.direction, 0, Math.PI * 2);
+                ctx.fill();
+                // Wizard hat (always points up)
+                ctx.fillStyle = '#1a0033';
+                ctx.beginPath();
+                ctx.moveTo(-8 * scaleFactor, -16 * scaleFactor);
+                ctx.lineTo(8 * scaleFactor, -16 * scaleFactor);
+                ctx.lineTo(0, -30 * scaleFactor);
+                ctx.closePath();
+                ctx.fill();
+                // Hat outline
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 1 * scaleFactor;
+                ctx.stroke();
+                // Hat star
+                ctx.fillStyle = '#ffff00';
+                ctx.beginPath();
+                ctx.arc(0, -23 * scaleFactor, 2 * scaleFactor, 0, Math.PI * 2);
+                ctx.fill();
+                // Eyes (always visible)
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(-4 * scaleFactor, -5 * scaleFactor, 3 * scaleFactor, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(4 * scaleFactor, -5 * scaleFactor, 3 * scaleFactor, 0, Math.PI * 2);
+                ctx.fill();
+                // Eye pupils
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(-4 * scaleFactor, -5 * scaleFactor, 1.5 * scaleFactor, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(4 * scaleFactor, -5 * scaleFactor, 1.5 * scaleFactor, 0, Math.PI * 2);
+                ctx.fill();
+                // Staff extending in facing direction
+                const staffLength = 25 * scaleFactor;
+                const staffEndX = Math.cos(this.direction) * staffLength;
+                const staffEndY = Math.sin(this.direction) * staffLength;
+                ctx.strokeStyle = '#8b4513';
+                ctx.lineWidth = 3 * scaleFactor;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(staffEndX, staffEndY);
+                ctx.stroke();
+                // Staff orb at the end
+                ctx.fillStyle = '#ff6b6b';
+                ctx.beginPath();
+                ctx.arc(staffEndX, staffEndY, 5 * scaleFactor, 0, Math.PI * 2);
+                ctx.fill();
+                // Orb glow
+                ctx.fillStyle = 'rgba(255, 107, 107, 0.4)';
+                ctx.beginPath();
+                ctx.arc(staffEndX, staffEndY, 8 * scaleFactor, 0, Math.PI * 2);
+                ctx.fill();
+                // Directional arrow on body
+                ctx.fillStyle = '#ffff00';
+                ctx.beginPath();
+                ctx.moveTo(Math.cos(this.direction) * 10 * scaleFactor, Math.sin(this.direction) * 10 * scaleFactor);
+                ctx.lineTo(Math.cos(this.direction + 2.5) * 6 * scaleFactor, Math.sin(this.direction + 2.5) * 6 * scaleFactor);
+                ctx.lineTo(Math.cos(this.direction - 2.5) * 6 * scaleFactor, Math.sin(this.direction - 2.5) * 6 * scaleFactor);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            },
+            
+            takeDamage(damage) {
+                this.health -= damage;
+                if (this.health <= 0) {
+                    this.health = 0;
+                    this.alive = false;
+                }
+            }
+        };
+        
+        // Fireballs array
+        const fireballs = [];
+        
+        // Coins array
+        const coins = [];
+        
+        // Bot wizards array
+        const bots = [];
+        
+        // Spawn timers
+        let botSpawnTimer = 0;
+        let coinSpawnTimer = 0;
+        const botSpawnInterval = 300; // Spawn a new bot every 5 seconds (300 frames at 60fps)
+        const coinSpawnInterval = 120; // Spawn new coins every 2 seconds (120 frames at 60fps)
+        const maxBots = 8; // Maximum number of bots on screen
+        const maxCoins = 100; // Maximum number of coins on screen
+        
+        // Generate initial coins
+        function generateCoins() {
+            for (let i = 0; i < 50; i++) {
+                coins.push({
+                    x: Math.random() * (WORLD_WIDTH - 40) + 20,
+                    y: Math.random() * (WORLD_HEIGHT - 40) + 20,
+                    size: 12,
+                    collected: false,
+                    bobOffset: Math.random() * Math.PI * 2,
+                    sparkles: []
+                });
+            }
+        }
+        
+        // Generate initial bots
+        function generateBots() {
+            for (let i = 0; i < 3; i++) {
+                bots.push(new BotWizard(
+                    Math.random() * (WORLD_WIDTH - 100) + 50,
+                    Math.random() * (WORLD_HEIGHT - 100) + 50,
+                    i
+                ));
+            }
+        }
+        
+        // Spawn new bot
+        function spawnBot() {
+            if (bots.filter(bot => bot.alive).length < maxBots) {
+                const newBot = new BotWizard(
+                    Math.random() * (WORLD_WIDTH - 100) + 50,
+                    Math.random() * (WORLD_HEIGHT - 100) + 50,
+                    bots.length
+                );
+                bots.push(newBot);
+                console.log('Spawned new bot!');
+            }
+        }
+        
+        // Spawn new coins
+        function spawnCoins() {
+            const currentCoins = coins.filter(coin => !coin.collected).length;
+            if (currentCoins < maxCoins) {
+                const coinsToSpawn = Math.min(5, maxCoins - currentCoins);
+                for (let i = 0; i < coinsToSpawn; i++) {
+                    coins.push({
+                        x: Math.random() * (WORLD_WIDTH - 40) + 20,
+                        y: Math.random() * (WORLD_HEIGHT - 40) + 20,
+                        size: 12,
+                        collected: false,
+                        bobOffset: Math.random() * Math.PI * 2,
+                        sparkles: []
+                    });
+                }
+            }
+        }
+        
+        generateCoins();
+        console.log('Generated coins:', coins.length);
+        
+        class Coin {
+            static draw(coin, index) {
+                if (coin.collected) return;
+                
+                const screenX = coin.x - camera.x;
+                const screenY = coin.y - camera.y;
+                
+                // Skip if off screen
+                if (screenX < -30 || screenX > canvas.width + 30 || 
+                    screenY < -30 || screenY > canvas.height + 30) return;
+                
+                // Bob animation
+                const bobY = screenY + Math.sin(Date.now() * 0.005 + coin.bobOffset) * 3;
+                
+                // Coin shadow
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.beginPath();
+                ctx.ellipse(screenX, screenY + 15, 8, 3, 0, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Coin glow
+                ctx.fillStyle = 'rgba(255, 215, 0, 0.3)';
+                ctx.beginPath();
+                ctx.arc(screenX, bobY, coin.size + 5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Main coin
+                ctx.fillStyle = '#ffd700';
+                ctx.beginPath();
+                ctx.arc(screenX, bobY, coin.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Coin outline
+                ctx.strokeStyle = '#b8860b';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Inner circle
+                ctx.fillStyle = '#ffed4e';
+                ctx.beginPath();
+                ctx.arc(screenX, bobY, coin.size - 3, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Coin symbol (star)
+                ctx.fillStyle = '#b8860b';
+                ctx.save();
+                ctx.translate(screenX, bobY);
+                ctx.rotate(Date.now() * 0.001);
+                
+                // Draw star
+                ctx.beginPath();
+                for (let i = 0; i < 5; i++) {
+                    const angle = (i * Math.PI * 2) / 5;
+                    const x = Math.cos(angle) * 4;
+                    const y = Math.sin(angle) * 4;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                    
+                    const angle2 = ((i + 0.5) * Math.PI * 2) / 5;
+                    const x2 = Math.cos(angle2) * 2;
+                    const y2 = Math.sin(angle2) * 2;
+                    ctx.lineTo(x2, y2);
+                }
+                ctx.closePath();
+                ctx.fill();
+                
+                ctx.restore();
+                
+                // Sparkles
+                if (Math.random() < 0.1) {
+                    coin.sparkles.push({
+                        x: screenX + (Math.random() - 0.5) * 20,
+                        y: bobY + (Math.random() - 0.5) * 20,
+                        life: 30,
+                        size: Math.random() * 3 + 1
+                    });
+                }
+                
+                // Draw sparkles
+                coin.sparkles.forEach((sparkle, sparkleIndex) => {
+                    ctx.fillStyle = `rgba(255, 255, 255, ${sparkle.life / 30})`;
+                    ctx.beginPath();
+                    ctx.arc(sparkle.x, sparkle.y, sparkle.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    sparkle.life--;
+                    if (sparkle.life <= 0) {
+                        coin.sparkles.splice(sparkleIndex, 1);
+                    }
+                });
+            }
+        }
+        
+        class Fireball {
+            constructor(x, y, direction, isPlayerFireball = false, customSize = null) {
+                this.x = x;
+                this.y = y;
+                this.direction = direction;
+                this.speed = 8;
+                this.size = customSize || 12;
+                this.lifetime = 120; // frames
+                this.particles = [];
+                this.isPlayerFireball = isPlayerFireball;
+                this.damage = 1;
+                // Create initial particles
+                for (let i = 0; i < 8; i++) {
+                    this.particles.push({
+                        x: 0,
+                        y: 0,
+                        vx: (Math.random() - 0.5) * 2,
+                        vy: (Math.random() - 0.5) * 2,
+                        life: Math.random() * 20 + 10,
+                        size: Math.random() * 3 + 2
+                    });
+                }
+            }
+            
+            update() {
+                // Move fireball
+                this.x += Math.cos(this.direction) * this.speed;
+                this.y += Math.sin(this.direction) * this.speed;
+                // Check collisions
+                this.checkCollisions();
+                // Update particles
+                this.particles.forEach(particle => {
+                    particle.x += particle.vx;
+                    particle.y += particle.vy;
+                    particle.life--;
+                    particle.size *= 0.98;
+                });
+                // Remove dead particles and add new ones
+                this.particles = this.particles.filter(p => p.life > 0);
+                if (this.particles.length < 6) {
+                    this.particles.push({
+                        x: 0,
+                        y: 0,
+                        vx: (Math.random() - 0.5) * 2,
+                        vy: (Math.random() - 0.5) * 2,
+                        life: Math.random() * 15 + 10,
+                        size: Math.random() * 3 + 2
+                    });
+                }
+                this.lifetime--;
+                return this.lifetime > 0 && this.x > 0 && this.x < WORLD_WIDTH && this.y > 0 && this.y < WORLD_HEIGHT;
+            }
+            
+            checkCollisions() {
+                if (this.isPlayerFireball) {
+                    // Player fireball hits bots
+                    bots.forEach(bot => {
+                        if (bot.alive) {
+                            const distance = Math.sqrt(
+                                Math.pow(this.x - (bot.x + bot.width/2), 2) + 
+                                Math.pow(this.y - (bot.y + bot.height/2), 2)
+                            );
+                            if (distance < this.size) {
+                                bot.takeDamage(this.damage);
+                                this.lifetime = 0; // Destroy fireball
+                            }
+                        }
+                    });
+                } else {
+                    // Bot fireball hits player
+                    if (player.alive) {
+                        const distance = Math.sqrt(
+                            Math.pow(this.x - (player.x + player.width/2), 2) + 
+                            Math.pow(this.y - (player.y + player.height/2), 2)
+                        );
+                        if (distance < this.size) {
+                            player.takeDamage(this.damage);
+                            this.lifetime = 0; // Destroy fireball
+                        }
+                    }
+                }
+            }
+            
+            draw() {
+                const screenX = this.x - camera.x;
+                const screenY = this.y - camera.y;
+                
+                // Draw particles
+                this.particles.forEach(particle => {
+                    const alpha = particle.life / 20;
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = `hsl(${20 + Math.random() * 20}, 100%, 60%)`;
+                    ctx.beginPath();
+                    ctx.arc(screenX + particle.x, screenY + particle.y, particle.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                });
+                
+                // Draw main fireball
+                ctx.save();
+                ctx.fillStyle = '#ff4444';
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Inner glow
+                ctx.fillStyle = '#ff8844';
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, this.size * 0.7, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Core
+                ctx.fillStyle = '#ffff44';
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, this.size * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.restore();
+            }
+        }
+        
+        class BotWizard {
+            constructor(x, y, id) {
+                this.x = x;
+                this.y = y;
+                this.width = 32;
+                this.height = 32;
+                this.speed = 2.5;
+                this.health = 2;
+                this.maxHealth = 2;
+                this.direction = Math.random() * Math.PI * 2;
+                this.coins = 0;
+                this.id = id;
+                this.targetCoin = null;
+                this.lastShot = 0;
+                this.shootCooldown = 60; // 1 second at 60fps
+                this.wanderDirection = Math.random() * Math.PI * 2;
+                this.wanderTimer = 0;
+                this.state = 'wander'; // 'wander', 'chase_coin', 'attack_player'
+                this.lastStateChange = 0;
+                this.stateChangeCooldown = 120; // 2 seconds
+                this.detectionRange = 150;
+                this.attackRange = 200;
+                this.color = this.getBotColor(id);
+                this.alive = true;
+            }
+            
+            getBotColor(id) {
+                const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57'];
+                return colors[id % colors.length];
+            }
+            
+            update() {
+                this.updateAI();
+                this.updateMovement();
+                this.updateShooting();
+                this.checkCoinCollection();
+            }
+            
+            updateAI() {
+                // Find nearest coin
+                let nearestCoin = null;
+                let nearestDistance = Infinity;
+                
+                coins.forEach(coin => {
+                    if (!coin.collected) {
+                        const distance = this.getDistanceTo(coin.x, coin.y);
+                        if (distance < nearestDistance) {
+                            nearestDistance = distance;
+                            nearestCoin = coin;
+                        }
+                    }
+                });
+                
+                // Check distance to player
+                const playerDistance = this.getDistanceTo(player.x + player.width/2, player.y + player.height/2);
+                
+                // State machine
+                if (this.lastStateChange <= 0) {
+                    if (playerDistance < this.attackRange && Math.random() < 0.3) {
+                        this.state = 'attack_player';
+                        this.lastStateChange = this.stateChangeCooldown;
+                    } else if (nearestCoin && nearestDistance < this.detectionRange) {
+                        this.state = 'chase_coin';
+                        this.targetCoin = nearestCoin;
+                        this.lastStateChange = this.stateChangeCooldown;
+                    } else {
+                        this.state = 'wander';
+                        this.lastStateChange = this.stateChangeCooldown;
+                    }
+                } else {
+                    this.lastStateChange--;
+                }
+                
+                // Update direction based on state
+                switch (this.state) {
+                    case 'wander':
+                        this.wanderTimer++;
+                        if (this.wanderTimer > 120 || Math.random() < 0.02) {
+                            this.wanderDirection = Math.random() * Math.PI * 2;
+                            this.wanderTimer = 0;
+                        }
+                        this.direction = this.wanderDirection;
+                        break;
+                        
+                    case 'chase_coin':
+                        if (this.targetCoin && !this.targetCoin.collected) {
+                            this.direction = Math.atan2(
+                                this.targetCoin.y - this.y,
+                                this.targetCoin.x - this.x
+                            );
+                        } else {
+                            // Target coin was collected or doesn't exist, find a new one
+                            this.targetCoin = null;
+                            this.state = 'wander';
+                        }
+                        break;
+                        
+                    case 'attack_player':
+                        this.direction = Math.atan2(
+                            (player.y + player.height/2) - this.y,
+                            (player.x + player.width/2) - this.x
+                        );
+                        break;
+                }
+            }
+            
+            updateMovement() {
+                // Move in current direction
+                const dx = Math.cos(this.direction) * this.speed;
+                const dy = Math.sin(this.direction) * this.speed;
+                
+                // Keep within world bounds
+                this.x = Math.max(0, Math.min(this.x + dx, WORLD_WIDTH - this.width));
+                this.y = Math.max(0, Math.min(this.y + dy, WORLD_HEIGHT - this.height));
+                
+                // If we're chasing a coin and we're very close, stop moving to avoid getting stuck
+                if (this.state === 'chase_coin' && this.targetCoin && !this.targetCoin.collected) {
+                    const distance = this.getDistanceTo(this.targetCoin.x, this.targetCoin.y);
+                    if (distance < 15) {
+                        // We're close enough, stop moving
+                        this.x -= dx;
+                        this.y -= dy;
+                    }
+                }
+            }
+            
+            updateShooting() {
+                if (this.lastShot <= 0) {
+                    const playerDistance = this.getDistanceTo(player.x + player.width/2, player.y + player.height/2);
+                    
+                    if (playerDistance < this.attackRange && this.state === 'attack_player') {
+                        this.shootFireball();
+                        this.lastShot = this.shootCooldown;
+                    }
+                } else {
+                    this.lastShot--;
+                }
+            }
+            
+            shootFireball() {
+                const centerX = this.x + this.width / 2;
+                const centerY = this.y + this.height / 2;
+                
+                // Calculate direction to player
+                const direction = Math.atan2(
+                    (player.y + player.height/2) - centerY,
+                    (player.x + player.width/2) - centerX
+                );
+                
+                // Create fireball at staff position
+                const staffX = centerX + Math.cos(this.direction) * 25;
+                const staffY = centerY + Math.sin(this.direction) * 25;
+                
+                fireballs.push(new Fireball(staffX, staffY, direction, false));
+            }
+            
+            checkCoinCollection() {
+                coins.forEach(coin => {
+                    if (!coin.collected) {
+                        const distance = this.getDistanceTo(coin.x, coin.y);
+                        
+                        if (distance < 25) {
+                            coin.collected = true;
+                            this.coins++;
+                            
+                            // Clear target coin if this was the one we were chasing
+                            if (this.targetCoin === coin) {
+                                this.targetCoin = null;
+                                this.state = 'wander';
+                            }
+                            
+                            // Create collection effect
+                            for (let i = 0; i < 10; i++) {
+                                coin.sparkles.push({
+                                    x: coin.x + (Math.random() - 0.5) * 30,
+                                    y: coin.y + (Math.random() - 0.5) * 30,
+                                    life: 60,
+                                    size: Math.random() * 4 + 2
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+            
+            getDistanceTo(x, y) {
+                const dx = (this.x + this.width/2) - x;
+                const dy = (this.y + this.height/2) - y;
+                return Math.sqrt(dx * dx + dy * dy);
+            }
+            
+            takeDamage(damage) {
+                this.health -= damage;
+                if (this.health <= 0) {
+                    this.health = 0;
+                    this.alive = false;
+                    this.dropCoins();
+                }
+            }
+            
+            dropCoins() {
+                const coinsToDrop = Math.max(5, this.coins);
+                for (let i = 0; i < coinsToDrop; i++) {
+                    // Drop coins in a circle around the bot's position
+                    const angle = (i / coinsToDrop) * Math.PI * 2;
+                    const distance = 30 + Math.random() * 20;
+                    const dropX = this.x + this.width/2 + Math.cos(angle) * distance;
+                    const dropY = this.y + this.height/2 + Math.sin(angle) * distance;
+                    coins.push({
+                        x: dropX,
+                        y: dropY,
+                        size: 12,
+                        collected: false,
+                        bobOffset: Math.random() * Math.PI * 2,
+                        sparkles: []
+                    });
+                }
+            }
+            
+            draw() {
+                const screenX = this.x - camera.x;
+                const screenY = this.y - camera.y;
+                
+                ctx.save();
+                ctx.translate(screenX + this.width/2, screenY + this.height/2);
+                
+                // Shadow
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.beginPath();
+                ctx.ellipse(0, 20, 18, 6, 0, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Main body (circle) - different color for bots
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(0, 0, 16, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Body outline
+                ctx.strokeStyle = '#2a0050';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Direction indicator - front part of robe
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = 0.8;
+                ctx.beginPath();
+                ctx.ellipse(Math.cos(this.direction) * 6, Math.sin(this.direction) * 6, 8, 12, this.direction, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+                
+                // Wizard hat (always points up)
+                ctx.fillStyle = '#1a0033';
+                ctx.beginPath();
+                ctx.moveTo(-8, -16);
+                ctx.lineTo(8, -16);
+                ctx.lineTo(0, -30);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Hat outline
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                
+                // Hat star
+                ctx.fillStyle = '#ffff00';
+                ctx.beginPath();
+                ctx.arc(0, -23, 2, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Eyes (always visible)
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(-4, -5, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(4, -5, 3, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Eye pupils
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(-4, -5, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(4, -5, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Staff extending in facing direction
+                const staffLength = 25;
+                const staffEndX = Math.cos(this.direction) * staffLength;
+                const staffEndY = Math.sin(this.direction) * staffLength;
+                
+                ctx.strokeStyle = '#8b4513';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(staffEndX, staffEndY);
+                ctx.stroke();
+                
+                // Staff orb at the end
+                ctx.fillStyle = '#ff6b6b';
+                ctx.beginPath();
+                ctx.arc(staffEndX, staffEndY, 5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Orb glow
+                ctx.fillStyle = 'rgba(255, 107, 107, 0.4)';
+                ctx.beginPath();
+                ctx.arc(staffEndX, staffEndY, 8, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Directional arrow on body
+                ctx.fillStyle = '#ffff00';
+                ctx.beginPath();
+                ctx.moveTo(Math.cos(this.direction) * 10, Math.sin(this.direction) * 10);
+                ctx.lineTo(Math.cos(this.direction + 2.5) * 6, Math.sin(this.direction + 2.5) * 6);
+                ctx.lineTo(Math.cos(this.direction - 2.5) * 6, Math.sin(this.direction - 2.5) * 6);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Bot indicator
+                ctx.fillStyle = '#ff0000';
+                ctx.font = '12px Arial';
+                ctx.fillText('BOT', -15, -35);
+                
+                ctx.restore();
+            }
+        }
+        
+        // Generate bots after class definition
+        generateBots();
+        console.log('Generated bots:', bots.length);
+        
+        // Input handling
+        const keys = {};
+        let mouseX = 0;
+        let mouseY = 0;
+        
+        document.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+            
+            if (e.key === ' ') {
+                e.preventDefault();
+                shootFireball();
+            }
+            
+            if (e.key.toLowerCase() === 'c') {
+                e.preventDefault();
+                teleport();
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+        
+        function teleport() {
+            if (player.teleportCooldown > 0) return;
+            
+            // Calculate teleport destination
+            const teleportX = player.x + Math.cos(player.direction) * player.teleportDistance;
+            const teleportY = player.y + Math.sin(player.direction) * player.teleportDistance;
+            
+            // Keep within world bounds
+            const newX = Math.max(0, Math.min(teleportX, WORLD_WIDTH - player.width));
+            const newY = Math.max(0, Math.min(teleportY, WORLD_HEIGHT - player.height));
+            
+            // Create teleport effect at old position
+            createTeleportEffect(player.x + player.width/2, player.y + player.height/2);
+            
+            // Move player
+            player.x = newX;
+            player.y = newY;
+            
+            // Create teleport effect at new position
+            createTeleportEffect(player.x + player.width/2, player.y + player.height/2);
+            
+            // Set cooldown
+            player.teleportCooldown = player.teleportMaxCooldown;
+        }
+        
+        // Teleport effects array
+        const teleportEffects = [];
+        
+        function createTeleportEffect(x, y) {
+            for (let i = 0; i < 20; i++) {
+                teleportEffects.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    life: 60,
+                    maxLife: 60,
+                    size: Math.random() * 4 + 2,
+                    color: `hsl(${280 + Math.random() * 40}, 80%, 70%)`
+                });
+            }
+        }
+        
+        function updateTeleportEffects() {
+            for (let i = teleportEffects.length - 1; i >= 0; i--) {
+                const effect = teleportEffects[i];
+                effect.x += effect.vx;
+                effect.y += effect.vy;
+                effect.vx *= 0.95;
+                effect.vy *= 0.95;
+                effect.life--;
+                
+                if (effect.life <= 0) {
+                    teleportEffects.splice(i, 1);
+                }
+            }
+        }
+        
+        function drawTeleportEffects() {
+            teleportEffects.forEach(effect => {
+                const screenX = effect.x - camera.x;
+                const screenY = effect.y - camera.y;
+                
+                // Skip if off screen
+                if (screenX < -50 || screenX > canvas.width + 50 || 
+                    screenY < -50 || screenY > canvas.height + 50) return;
+                
+                ctx.save();
+                ctx.globalAlpha = effect.life / effect.maxLife;
+                ctx.fillStyle = effect.color;
+                ctx.beginPath();
+                ctx.arc(screenX, screenY, effect.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+        }
+        
+        function shootFireball() {
+            const centerX = player.x + player.width / 2;
+            const centerY = player.y + player.height / 2;
+            // Calculate direction from player to mouse
+            const playerScreenX = centerX - camera.x;
+            const playerScreenY = centerY - camera.y;
+            const direction = Math.atan2(mouseY - playerScreenY, mouseX - playerScreenX);
+            // Create fireball at staff position
+            const scaleFactor = 1 + Math.log(player.level) * 0.8;
+            const staffX = centerX + Math.cos(player.direction) * (25 * scaleFactor);
+            const staffY = centerY + Math.sin(player.direction) * (25 * scaleFactor);
+            fireballs.push(new Fireball(staffX, staffY, direction, true, player.fireballSize));
+        }
+        
+        function updatePlayer() {
+            // Update cooldowns
+            if (player.teleportCooldown > 0) {
+                player.teleportCooldown--;
+            }
+            // Movement
+            let dx = 0;
+            let dy = 0;
+            if (keys['w'] || keys['arrowup']) dy -= player.speed;
+            if (keys['s'] || keys['arrowdown']) dy += player.speed;
+            if (keys['a'] || keys['arrowleft']) dx -= player.speed;
+            if (keys['d'] || keys['arrowright']) dx += player.speed;
+            // Diagonal movement normalization
+            if (dx !== 0 && dy !== 0) {
+                dx *= 0.707;
+                dy *= 0.707;
+            }
+            // Update player position
+            player.x = Math.max(0, Math.min(player.x + dx, WORLD_WIDTH - player.width));
+            player.y = Math.max(0, Math.min(player.y + dy, WORLD_HEIGHT - player.height));
+            // Update player direction based on mouse
+            const playerScreenX = (player.x + player.width / 2) - camera.x;
+            const playerScreenY = (player.y + player.height / 2) - camera.y;
+            player.direction = Math.atan2(mouseY - playerScreenY, mouseX - playerScreenX);
+            // Check coin collection
+            coins.forEach(coin => {
+                if (!coin.collected) {
+                    const distanceX = (player.x + player.width / 2) - coin.x;
+                    const distanceY = (player.y + player.height / 2) - coin.y;
+                    const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
+                    // Collection radius scales with player size
+                    const collectionRadius = 20 + (player.width - player.baseWidth) * 0.3;
+                    if (distance < collectionRadius) {
+                        coin.collected = true;
+                        player.coins++;
+                        // Level up every 10 coins
+                        if (player.coins >= player.coinsToNextLevel) {
+                            player.levelUp();
+                        }
+                        // Reduce teleport cooldown when collecting coins
+                        player.teleportCooldown = Math.max(0, player.teleportCooldown - 30);
+                        // Create collection effect
+                        for (let i = 0; i < 10; i++) {
+                            coin.sparkles.push({
+                                x: coin.x + (Math.random() - 0.5) * 30,
+                                y: coin.y + (Math.random() - 0.5) * 30,
+                                life: 60,
+                                size: Math.random() * 4 + 2
+                            });
+                        }
+                    }
+                }
+            });
+        }
+        
+        function drawBackground() {
+            // Draw mystical background pattern
+            ctx.fillStyle = '#0f1419';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw magical grid
+            ctx.strokeStyle = 'rgba(74, 144, 226, 0.1)';
+            ctx.lineWidth = 1;
+            
+            const gridSize = 50;
+            const startX = -(camera.x % gridSize);
+            const startY = -(camera.y % gridSize);
+            
+            for (let x = startX; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            for (let y = startY; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Draw some mystical runes scattered around
+            ctx.fillStyle = 'rgba(138, 43, 226, 0.3)';
+            for (let i = 0; i < 20; i++) {
+                const runeX = (i * 157) % WORLD_WIDTH;
+                const runeY = (i * 231) % WORLD_HEIGHT;
+                const screenX = runeX - camera.x;
+                const screenY = runeY - camera.y;
+                
+                if (screenX > -30 && screenX < canvas.width + 30 && 
+                    screenY > -30 && screenY < canvas.height + 30) {
+                    ctx.save();
+                    ctx.translate(screenX, screenY);
+                    ctx.rotate(i * 0.5);
+                    ctx.fillRect(-10, -2, 20, 4);
+                    ctx.fillRect(-2, -10, 4, 20);
+                    ctx.restore();
+                }
+            }
+        }
+        
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Update spawn timers
+            botSpawnTimer++;
+            coinSpawnTimer++;
+            
+            // Spawn new bots
+            if (botSpawnTimer >= botSpawnInterval) {
+                spawnBot();
+                botSpawnTimer = 0;
+            }
+            
+            // Spawn new coins
+            if (coinSpawnTimer >= coinSpawnInterval) {
+                spawnCoins();
+                coinSpawnTimer = 0;
+            }
+            
+            // Clean up dead bots and collected coins
+            for (let i = bots.length - 1; i >= 0; i--) {
+                if (!bots[i].alive) {
+                    bots.splice(i, 1);
+                }
+            }
+            
+            // Update game objects
+            updatePlayer();
+            updateTeleportEffects();
+            
+            // Update bots
+            bots.forEach(bot => {
+                if (bot.alive) {
+                    bot.update();
+                }
+            });
+            
+            // Update camera to follow player
+            camera.follow(player);
+            
+            // Update fireballs
+            for (let i = fireballs.length - 1; i >= 0; i--) {
+                if (!fireballs[i].update()) {
+                    fireballs.splice(i, 1);
+                }
+            }
+            
+            // Draw everything
+            drawBackground();
+            
+            // Draw coins
+            coins.forEach((coin, index) => {
+                Coin.draw(coin, index);
+            });
+            
+            drawTeleportEffects();
+            if (player.alive) {
+                player.draw();
+            }
+            fireballs.forEach(fireball => fireball.draw());
+            
+            // Draw bots
+            bots.forEach(bot => {
+                if (bot.alive) {
+                    bot.draw();
+                }
+            });
+            
+            // Draw UI
+            drawUI();
+            
+            // Draw game over screen if player is dead
+            if (!player.alive) {
+                drawGameOver();
+            }
+            
+            // Continue game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Debug: Check if canvas and context are available
+        console.log('Canvas:', canvas);
+        console.log('Context:', ctx);
+        console.log('Canvas dimensions:', canvas.width, 'x', canvas.height);
+        
+        function drawUI() {
+            // Level display
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(10, -10, 120, 30);
+            ctx.fillStyle = '#fff';
+            ctx.font = '18px Arial';
+            ctx.fillText(`Level: ${player.level}`, 20, 10);
+            // Health bar
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(10, 10, 150, 35);
+            ctx.fillStyle = '#ff0000';
+            ctx.font = '16px Arial';
+            ctx.fillText('❤️', 15, 30);
+            ctx.fillStyle = '#fff';
+            ctx.fillText(`Health: ${player.health}/${player.maxHealth}`, 40, 30);
+            // Health bar background
+            ctx.fillStyle = '#333';
+            ctx.fillRect(15, 35, 120, 8);
+            // Health bar fill
+            const healthPercent = player.health / player.maxHealth;
+            if (healthPercent > 0.5) {
+                ctx.fillStyle = '#4ade80'; // Green
+            } else if (healthPercent > 0.25) {
+                ctx.fillStyle = '#fbbf24'; // Yellow
+            } else {
+                ctx.fillStyle = '#ef4444'; // Red
+            }
+            ctx.fillRect(15, 35, 120 * healthPercent, 8);
+            // Coin counter
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(10, 50, 120, 35);
+            
+            // Teleport cooldown indicator
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(10, 90, 150, 40);
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px Arial';
+            ctx.fillText('Teleport (C)', 15, 110);
+            
+            // Cooldown bar
+            const cooldownWidth = 120;
+            const cooldownHeight = 8;
+            const cooldownProgress = 1 - (player.teleportCooldown / player.teleportMaxCooldown);
+            
+            // Background bar
+            ctx.fillStyle = '#333';
+            ctx.fillRect(15, 115, cooldownWidth, cooldownHeight);
+            
+            // Progress bar
+            if (player.teleportCooldown > 0) {
+                ctx.fillStyle = '#ff6b6b';
+            } else {
+                ctx.fillStyle = '#4ade80';
+            }
+            ctx.fillRect(15, 115, cooldownWidth * cooldownProgress, cooldownHeight);
+            
+            // Ready text
+            if (player.teleportCooldown === 0) {
+                ctx.fillStyle = '#4ade80';
+                ctx.font = '14px Arial';
+                ctx.fillText('READY!', 145, 122);
+            }
+        }
+        
+        function drawGameOver() {
+            // Semi-transparent overlay
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Game over text
+            ctx.fillStyle = '#ff0000';
+            ctx.font = '48px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 50);
+            
+            // Stats
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '24px Arial';
+            ctx.fillText(`Final Score: ${player.coins} coins`, canvas.width / 2, canvas.height / 2);
+            ctx.fillText('Refresh to play again', canvas.width / 2, canvas.height / 2 + 50);
+            
+            ctx.textAlign = 'left'; // Reset text alignment
+        }
+        
+        // Start the game
+        console.log('Starting game...');
+        gameLoop();
+    </script>
+</body>
+</html>
