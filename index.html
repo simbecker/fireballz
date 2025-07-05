@@ -22,11 +22,15 @@
             border: 3px solid #4a90e2;
             border-radius: 10px;
             box-shadow: 0 0 30px rgba(74, 144, 226, 0.5);
+            width: 100vw;
+            height: 100vh;
         }
         
         #gameCanvas {
             display: block;
             background: #0f1419;
+            width: 100%;
+            height: 100%;
         }
         
         #instructions {
@@ -46,7 +50,7 @@
 </head>
 <body>
     <div id="gameContainer">
-        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <canvas id="gameCanvas"></canvas>
         <div id="instructions">
             <div>🧙‍♂️ WASD or Arrow Keys: Move</div>
             <div>🔥 Spacebar: Shoot Fireball</div>
@@ -79,8 +83,32 @@
                 // Keep camera within world bounds
                 this.x = Math.max(0, Math.min(this.x, WORLD_WIDTH - this.width));
                 this.y = Math.max(0, Math.min(this.y, WORLD_HEIGHT - this.height));
+            },
+            
+            updateSize() {
+                this.width = canvas.width;
+                this.height = canvas.height;
             }
         };
+        
+        // Set canvas to fullscreen
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            camera.updateSize();
+            console.log('Canvas resized to:', canvas.width, 'x', canvas.height);
+        }
+        
+        // Initialize canvas size
+        resizeCanvas();
+        
+        // Test if canvas is working
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(0, 0, 100, 100);
+        console.log('Test draw completed');
+        
+        // Handle window resize
+        window.addEventListener('resize', resizeCanvas);
         
         // Player wizard
         const player = {
@@ -109,7 +137,7 @@
                 this.level++;
                 this.coinsToNextLevel += 10;
                 // Logarithmic scaling: starts with doubling, then levels off
-                const scaleFactor = 1 + Math.log(this.level) * 0.8;
+                const scaleFactor = 1 + Math.log(this.level) * 1.5;
                 this.width = this.baseWidth * scaleFactor;
                 this.height = this.baseHeight * scaleFactor;
                 // Fireball size follows the same scaling
@@ -121,7 +149,7 @@
             draw() {
                 const screenX = this.x - camera.x;
                 const screenY = this.y - camera.y;
-                const scaleFactor = 1 + Math.log(this.level) * 0.8;
+                const scaleFactor = 1 + Math.log(this.level) * 1.5;
                 ctx.save();
                 ctx.translate(screenX + this.width/2, screenY + this.height/2);
                 // Shadow
@@ -729,7 +757,7 @@
             draw() {
                 const screenX = this.x - camera.x;
                 const screenY = this.y - camera.y;
-                
+                const scaleFactor = 1 + Math.log(this.level) * 1.5;
                 ctx.save();
                 ctx.translate(screenX + this.width/2, screenY + this.height/2);
                 
@@ -956,7 +984,7 @@
             const playerScreenY = centerY - camera.y;
             const direction = Math.atan2(mouseY - playerScreenY, mouseX - playerScreenX);
             // Create fireball at staff position
-            const scaleFactor = 1 + Math.log(player.level) * 0.8;
+            const scaleFactor = 1 + Math.log(player.level) * 1.5;
             const staffX = centerX + Math.cos(player.direction) * (25 * scaleFactor);
             const staffY = centerY + Math.sin(player.direction) * (25 * scaleFactor);
             fireballs.push(new Fireball(staffX, staffY, direction, true, player.fireballSize));
@@ -1068,6 +1096,10 @@
             // Clear canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
+            // Debug: Draw a simple background to ensure rendering works
+            ctx.fillStyle = '#0f1419';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
             // Update spawn timers
             botSpawnTimer++;
             coinSpawnTimer++;
@@ -1113,7 +1145,7 @@
             }
             
             // Draw everything
-            drawBackground();
+            // drawBackground();
             
             // Draw coins
             coins.forEach((coin, index) => {
@@ -1237,7 +1269,14 @@
         
         // Start the game
         console.log('Starting game...');
-        gameLoop();
+        
+        // Test if the game loop can run at all
+        try {
+            gameLoop();
+            console.log('Game loop started successfully');
+        } catch (error) {
+            console.error('Error starting game loop:', error);
+        }
     </script>
 </body>
 </html>
