@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiplayer Wizard Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            position: relative;
+            border: 3px solid #4a90e2;
+            border-radius: 10px;
+            box-shadow: 0 0 30px rgba(74, 144, 226, 0.5);
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #gameCanvas {
+            display: block;
+            background: #0f1419;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #instructions {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: #ffffff;
+            font-size: 14px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 100;
+        }
+        
+        #instructions div {
+            margin: 2px 0;
+        }
+
+        #connectionStatus {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #ffffff;
+            font-size: 14px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+
+        .connected {
+            color: #4CAF50;
+        }
+
+        .disconnected {
+            color: #f44336;
+        }
+
+        #playerCount {
+            position: absolute;
+            top: 40px;
+            left: 10px;
+            color: #ffffff;
+            font-size: 14px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+
+        #notifications {
+            position: absolute;
+            top: 70px;
+            left: 10px;
+            color: #ffffff;
+            font-size: 12px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+            max-width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="instructions">
+            <div>🧙‍♂️ WASD or Arrow Keys: Move</div>
+            <div>🔥 Spacebar: Shoot Fireball</div>
+            <div>🎯 Mouse: Aim Direction</div>
+            <div>⚡ C: Teleport (cooldown)</div>
+            <div>🪙 Coins reduce teleport cooldown!</div>
+            <div>🤖 Bot wizards compete for coins and attack you!</div>
+            <div>👥 Multiplayer: See other players!</div>
+        </div>
+        <div id="connectionStatus" class="disconnected">
+            Connecting...
+        </div>
+        <div id="playerCount">
+            Players: 1
+        </div>
+        <div id="notifications">
+            Waiting for players...
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const connectionStatusElement = document.getElementById('connectionStatus');
+        const playerCountElement = document.getElementById('playerCount');
+        const notificationsElement = document.getElementById('notifications');
+        
+        // Game world dimensions
+        const WORLD_WIDTH = 2000;
+        const WORLD_HEIGHT = 1500;
+        
+        // Camera system
+        const camera = {
+            x: 0,
+            y: 0,
+            width: canvas.width,
+            height: canvas.height,
+            
+            follow(target) {
+                this.x = target.x - this.width / 2;
+                this.y = target.y - this.height / 2;
+                
+                // Keep camera within world bounds
+                this.x = Math.max(0, Math.min(this.x, WORLD_WIDTH - this.width));
+                this.y = Math.max(0, Math.min(this.y, WORLD_HEIGHT - this.height));
+            },
+            
+            updateSize() {
+                this.width = canvas.width;
+                this.height = canvas.height;
+            }
+        };
+        
+        // Set canvas to fullscreen
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            camera.updateSize();
+        }
+        
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Game state
+        let player = null;
+        let otherPlayers = new Map();
+        let fireballs = [];
+        let coins = [];
+        let bots = [];
+        let teleportEffects = [];
+        let playerId = null;
+        let ws = null;
+        
+        // Input handling
+        const keys = {};
+        let mouseX = 0;
+        let mouseY = 0;
+        
+        // WebSocket connection
+        function connectToServer() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                connectionStatusElement.textContent = 'Connected';
+                connectionStatusElement.className = 'connected';
+                console.log('Connected to server');
+            };
+            
+            ws.onclose = () => {
+                connectionStatusElement.textContent = 'Disconnected';
+                connectionStatusElement.className = 'disconnected';
+                console.log('Disconnected from server');
+                setTimeout(connectToServer, 3000);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleServerMessage(data);
+                } catch (error) {
+                    console.error('Error parsing message:', error);
+                }
+            };
+        }
+        
+        function handleServerMessage(data) {
+            switch (data.type) {
+                case 'init':
+                    playerId = data.playerId;
+                    player = data.players.find(p => p.id === playerId);
+                    
+                    // Add other players
+                    data.players.forEach(p => {
+                        if (p.id !== playerId) {
+                            otherPlayers.set(p.id, p);
+                        }
+                    });
+                    
+                    coins = data.coins;
+                    bots = data.bots;
+                    updatePlayerCount();
+                    break;
+                    
+                case 'playerJoined':
+                    if (data.player.id !== playerId) {
+                        otherPlayers.set(data.player.id, data.player);
+                        updatePlayerCount();
+                        showNotification(`Player joined! Total: ${otherPlayers.size + 1}`);
+                    }
+                    break;
+                    
+                case 'playerLeft':
+                    otherPlayers.delete(data.playerId);
+                    updatePlayerCount();
+                    showNotification(`Player left! Total: ${otherPlayers.size + 1}`);
+                    break;
+                    
+                case 'gameUpdate':
+                    // Always clear and replace all state
+                    otherPlayers.clear();
+                    data.players.forEach(p => {
+                        if (p.id === playerId) {
+                            player = p;
+                        } else {
+                            otherPlayers.set(p.id, p);
+                        }
+                    });
+                    fireballs = data.fireballs;
+                    coins = data.coins;
+                    bots = data.bots;
+                    updatePlayerCount();
+                    break;
+                    
+                case 'fireballShot':
+                    fireballs.push(data.fireball);
+                    break;
+                    
+                case 'playerTeleported':
+                    if (data.playerId !== playerId && otherPlayers.has(data.playerId)) {
+                        const otherPlayer = otherPlayers.get(data.playerId);
+                        otherPlayer.x = data.x;
+                        otherPlayer.y = data.y;
+                    }
+                    break;
+                    
+                case 'coinCollected':
+                    if (data.playerId === playerId) {
+                        // Update local player stats
+                        player.coins = data.newCoins;
+                        player.level = data.newLevel;
+                    }
+                    break;
+            }
+        }
+        
+        function updatePlayerCount() {
+            playerCountElement.textContent = `Players: ${otherPlayers.size + 1}`;
+        }
+        
+        function showNotification(message) {
+            notificationsElement.textContent = message;
+            setTimeout(() => {
+                notificationsElement.textContent = '';
+            }, 3000);
+        }
+        
+        // Input event listeners
+        document.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+            
+            if (e.key === ' ') {
+                e.preventDefault();
+                shootFireball();
+            }
+            
+            if (e.key.toLowerCase() === 'c') {
+                e.preventDefault();
+                teleport();
+            }
+            
+            // Send input to server
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'updateInput',
+                    keys: keys,
+                    mouseX: mouseX,
+                    mouseY: mouseY
+                }));
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+            
+            // Send input to server
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'updateInput',
+                    keys: keys,
+                    mouseX: mouseX,
+                    mouseY: mouseY
+                }));
+            }
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+            
+            // Send mouse position to server
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'updateInput',
+                    keys: keys,
+                    mouseX: mouseX,
+                    mouseY: mouseY
+                }));
+            }
+        });
+        
+        function shootFireball() {
+            if (!player || !player.alive) return;
+            
+            const centerX = player.x + player.width / 2;
+            const centerY = player.y + player.height / 2;
+            const direction = Math.atan2(mouseY, mouseX);
+            const staffX = centerX + Math.cos(player.direction) * 25;
+            const staffY = centerY + Math.sin(player.direction) * 25;
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'shootFireball',
+                    x: staffX,
+                    y: staffY,
+                    direction: direction,
+                    size: player.fireballSize
+                }));
+            }
+        }
+        
+        function teleport() {
+            if (!player || !player.alive || player.teleportCooldown > 0) return;
+            
+            const teleportX = player.x + Math.cos(player.direction) * player.teleportDistance;
+            const teleportY = player.y + Math.sin(player.direction) * player.teleportDistance;
+            const newX = Math.max(0, Math.min(teleportX, WORLD_WIDTH - player.width));
+            const newY = Math.max(0, Math.min(teleportY, WORLD_HEIGHT - player.height));
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'teleport',
+                    x: newX,
+                    y: newY
+                }));
+            }
+        }
+        
+        // Drawing functions
+        function drawWizard(wizard, isPlayer = false) {
+            const screenX = wizard.x - camera.x;
+            const screenY = wizard.y - camera.y;
+            const scaleFactor = 1 + Math.log(wizard.level || 1) * 1.5;
+            
+            ctx.save();
+            ctx.translate(screenX + wizard.width/2, screenY + wizard.height/2);
+            
+            // Shadow
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.beginPath();
+            ctx.ellipse(0, 20, 18 * scaleFactor, 6 * scaleFactor, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Main body
+            ctx.fillStyle = isPlayer ? '#4a0080' : wizard.color || '#ff6b6b';
+            ctx.beginPath();
+            ctx.arc(0, 0, 16 * scaleFactor, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Body outline
+            ctx.strokeStyle = '#2a0050';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.stroke();
+            
+            // Direction indicator
+            ctx.fillStyle = isPlayer ? '#6a00b0' : wizard.color || '#ff6b6b';
+            ctx.beginPath();
+            ctx.ellipse(Math.cos(wizard.direction) * 6, Math.sin(wizard.direction) * 6, 8 * scaleFactor, 12 * scaleFactor, wizard.direction, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Wizard hat
+            ctx.fillStyle = '#1a0033';
+            ctx.beginPath();
+            ctx.moveTo(-8 * scaleFactor, -16 * scaleFactor);
+            ctx.lineTo(8 * scaleFactor, -16 * scaleFactor);
+            ctx.lineTo(0, -30 * scaleFactor);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Hat outline
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1 * scaleFactor;
+            ctx.stroke();
+            
+            // Hat star
+            ctx.fillStyle = '#ffff00';
+            ctx.beginPath();
+            ctx.arc(0, -23 * scaleFactor, 2 * scaleFactor, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Eyes
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(-4 * scaleFactor, -5 * scaleFactor, 3 * scaleFactor, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(4 * scaleFactor, -5 * scaleFactor, 3 * scaleFactor, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Eye pupils
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(-4 * scaleFactor, -5 * scaleFactor, 1.5 * scaleFactor, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(4 * scaleFactor, -5 * scaleFactor, 1.5 * scaleFactor, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Staff
+            const staffLength = 25 * scaleFactor;
+            const staffEndX = Math.cos(wizard.direction) * staffLength;
+            const staffEndY = Math.sin(wizard.direction) * staffLength;
+            ctx.strokeStyle = '#8b4513';
+            ctx.lineWidth = 3 * scaleFactor;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(staffEndX, staffEndY);
+            ctx.stroke();
+            
+            // Staff orb
+            ctx.fillStyle = '#ff6b6b';
+            ctx.beginPath();
+            ctx.arc(staffEndX, staffEndY, 5 * scaleFactor, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Orb glow
+            ctx.fillStyle = 'rgba(255, 107, 107, 0.4)';
+            ctx.beginPath();
+            ctx.arc(staffEndX, staffEndY, 8 * scaleFactor, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Directional arrow
+            ctx.fillStyle = '#ffff00';
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(wizard.direction) * 10 * scaleFactor, Math.sin(wizard.direction) * 10 * scaleFactor);
+            ctx.lineTo(Math.cos(wizard.direction + 2.5) * 6 * scaleFactor, Math.sin(wizard.direction + 2.5) * 6 * scaleFactor);
+            ctx.lineTo(Math.cos(wizard.direction - 2.5) * 6 * scaleFactor, Math.sin(wizard.direction - 2.5) * 6 * scaleFactor);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Player name for other players
+            if (!isPlayer) {
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('PLAYER', 0, -40 * scaleFactor);
+                ctx.textAlign = 'left';
+            }
+            
+            ctx.restore();
+        }
+        
+        function drawFireball(fireball) {
+            const screenX = fireball.x - camera.x;
+            const screenY = fireball.y - camera.y;
+            
+            // Skip if off screen
+            if (screenX < -50 || screenX > canvas.width + 50 || 
+                screenY < -50 || screenY > canvas.height + 50) return;
+            
+            ctx.save();
+            ctx.fillStyle = '#ff4444';
+            ctx.beginPath();
+            ctx.arc(screenX, screenY, fireball.size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Inner glow
+            ctx.fillStyle = '#ff8844';
+            ctx.beginPath();
+            ctx.arc(screenX, screenY, fireball.size * 0.7, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Core
+            ctx.fillStyle = '#ffff44';
+            ctx.beginPath();
+            ctx.arc(screenX, screenY, fireball.size * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.restore();
+        }
+        
+        function drawCoin(coin) {
+            if (coin.collected) return;
+            
+            const screenX = coin.x - camera.x;
+            const screenY = coin.y - camera.y;
+            
+            // Skip if off screen
+            if (screenX < -30 || screenX > canvas.width + 30 || 
+                screenY < -30 || screenY > canvas.height + 30) return;
+            
+            // Bob animation
+            const bobY = screenY + Math.sin(Date.now() * 0.005 + coin.bobOffset) * 3;
+            
+            // Coin shadow
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.beginPath();
+            ctx.ellipse(screenX, screenY + 15, 8, 3, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Coin glow
+            ctx.fillStyle = 'rgba(255, 215, 0, 0.3)';
+            ctx.beginPath();
+            ctx.arc(screenX, bobY, coin.size + 5, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Main coin
+            ctx.fillStyle = '#ffd700';
+            ctx.beginPath();
+            ctx.arc(screenX, bobY, coin.size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Coin outline
+            ctx.strokeStyle = '#b8860b';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Inner circle
+            ctx.fillStyle = '#ffed4e';
+            ctx.beginPath();
+            ctx.arc(screenX, bobY, coin.size - 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Coin symbol
+            ctx.fillStyle = '#b8860b';
+            ctx.save();
+            ctx.translate(screenX, bobY);
+            ctx.rotate(Date.now() * 0.001);
+            
+            ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                const angle = (i * Math.PI * 2) / 5;
+                const x = Math.cos(angle) * 4;
+                const y = Math.sin(angle) * 4;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+                
+                const angle2 = ((i + 0.5) * Math.PI * 2) / 5;
+                const x2 = Math.cos(angle2) * 2;
+                const y2 = Math.sin(angle2) * 2;
+                ctx.lineTo(x2, y2);
+            }
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.restore();
+        }
+        
+        function drawBot(bot) {
+            if (!bot.alive) return;
+            
+            const screenX = bot.x - camera.x;
+            const screenY = bot.y - camera.y;
+            
+            // Skip if off screen
+            if (screenX < -50 || screenX > canvas.width + 50 || 
+                screenY < -50 || screenY > canvas.height + 50) return;
+            
+            ctx.save();
+            ctx.translate(screenX + bot.width/2, screenY + bot.height/2);
+            
+            // Shadow
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.beginPath();
+            ctx.ellipse(0, 20, 18, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Main body
+            ctx.fillStyle = bot.color || '#ff6b6b';
+            ctx.beginPath();
+            ctx.arc(0, 0, 16, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Body outline
+            ctx.strokeStyle = '#2a0050';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Direction indicator
+            ctx.fillStyle = bot.color || '#ff6b6b';
+            ctx.globalAlpha = 0.8;
+            ctx.beginPath();
+            ctx.ellipse(Math.cos(bot.direction) * 6, Math.sin(bot.direction) * 6, 8, 12, bot.direction, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            
+            // Wizard hat
+            ctx.fillStyle = '#1a0033';
+            ctx.beginPath();
+            ctx.moveTo(-8, -16);
+            ctx.lineTo(8, -16);
+            ctx.lineTo(0, -30);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Hat outline
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            
+            // Hat star
+            ctx.fillStyle = '#ffff00';
+            ctx.beginPath();
+            ctx.arc(0, -23, 2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Eyes
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(-4, -5, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(4, -5, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Eye pupils
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(-4, -5, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(4, -5, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Staff
+            const staffLength = 25;
+            const staffEndX = Math.cos(bot.direction) * staffLength;
+            const staffEndY = Math.sin(bot.direction) * staffLength;
+            ctx.strokeStyle = '#8b4513';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(staffEndX, staffEndY);
+            ctx.stroke();
+            
+            // Staff orb
+            ctx.fillStyle = '#ff6b6b';
+            ctx.beginPath();
+            ctx.arc(staffEndX, staffEndY, 5, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Orb glow
+            ctx.fillStyle = 'rgba(255, 107, 107, 0.4)';
+            ctx.beginPath();
+            ctx.arc(staffEndX, staffEndY, 8, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Directional arrow
+            ctx.fillStyle = '#ffff00';
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(bot.direction) * 10, Math.sin(bot.direction) * 10);
+            ctx.lineTo(Math.cos(bot.direction + 2.5) * 6, Math.sin(bot.direction + 2.5) * 6);
+            ctx.lineTo(Math.cos(bot.direction - 2.5) * 6, Math.sin(bot.direction - 2.5) * 6);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Bot indicator
+            ctx.fillStyle = '#ff0000';
+            ctx.font = '12px Arial';
+            ctx.fillText('BOT', -15, -35);
+            
+            ctx.restore();
+        }
+        
+        function drawUI() {
+            if (!player) return;
+            
+            // Level display
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(10, 10, 120, 30);
+            ctx.fillStyle = '#fff';
+            ctx.font = '18px Arial';
+            ctx.fillText(`Level: ${player.level}`, 20, 30);
+            
+            // Health bar
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(10, 50, 150, 35);
+            ctx.fillStyle = '#ff0000';
+            ctx.font = '16px Arial';
+            ctx.fillText('❤️', 15, 70);
+            ctx.fillStyle = '#fff';
+            ctx.fillText(`Health: ${player.health}/${player.maxHealth}`, 40, 70);
+            
+            // Health bar background
+            ctx.fillStyle = '#333';
+            ctx.fillRect(15, 75, 120, 8);
+            
+            // Health bar fill
+            const healthPercent = player.health / player.maxHealth;
+            if (healthPercent > 0.5) {
+                ctx.fillStyle = '#4ade80';
+            } else if (healthPercent > 0.25) {
+                ctx.fillStyle = '#fbbf24';
+            } else {
+                ctx.fillStyle = '#ef4444';
+            }
+            ctx.fillRect(15, 75, 120 * healthPercent, 8);
+            
+            // Coin counter
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(10, 90, 120, 35);
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px Arial';
+            ctx.fillText(`🪙 Coins: ${player.coins}`, 20, 110);
+            
+            // Teleport cooldown
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(10, 130, 150, 40);
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px Arial';
+            ctx.fillText('Teleport (C)', 15, 150);
+            
+            const cooldownWidth = 120;
+            const cooldownHeight = 8;
+            const cooldownProgress = 1 - (player.teleportCooldown / player.teleportMaxCooldown);
+            
+            ctx.fillStyle = '#333';
+            ctx.fillRect(15, 155, cooldownWidth, cooldownHeight);
+            
+            if (player.teleportCooldown > 0) {
+                ctx.fillStyle = '#ff6b6b';
+            } else {
+                ctx.fillStyle = '#4ade80';
+            }
+            ctx.fillRect(15, 155, cooldownWidth * cooldownProgress, cooldownHeight);
+            
+            if (player.teleportCooldown === 0) {
+                ctx.fillStyle = '#4ade80';
+                ctx.font = '14px Arial';
+                ctx.fillText('READY!', 145, 162);
+            }
+        }
+        
+        function drawGameOver() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = '#ff0000';
+            ctx.font = '48px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 50);
+            
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '24px Arial';
+            ctx.fillText(`Final Score: ${player.coins} coins`, canvas.width / 2, canvas.height / 2);
+            ctx.fillText('Refresh to play again', canvas.width / 2, canvas.height / 2 + 50);
+            
+            ctx.textAlign = 'left';
+        }
+        
+        function gameLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background
+            ctx.fillStyle = '#0f1419';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            if (player) {
+                // Update camera to follow player
+                camera.follow(player);
+                
+                // Draw coins
+                coins.forEach(coin => drawCoin(coin));
+                
+                // Draw fireballs
+                fireballs.forEach(fireball => drawFireball(fireball));
+                
+                // Draw bots
+                bots.forEach(bot => drawBot(bot));
+                
+                // Draw other players
+                otherPlayers.forEach(otherPlayer => {
+                    if (otherPlayer.alive) {
+                        drawWizard(otherPlayer, false);
+                    }
+                });
+                
+                // Debug: Show other players info
+                if (otherPlayers.size > 0) {
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                    ctx.fillRect(10, 180, 200, 80);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '12px Arial';
+                    ctx.fillText(`Other players: ${otherPlayers.size}`, 15, 200);
+                    let y = 215;
+                    otherPlayers.forEach((player, id) => {
+                        ctx.fillText(`${id.substring(0, 8)}: (${Math.round(player.x)}, ${Math.round(player.y)})`, 15, y);
+                        y += 15;
+                    });
+                }
+                
+                // Debug: Show shared game state
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(10, 270, 200, 60);
+                ctx.fillStyle = '#fff';
+                ctx.font = '12px Arial';
+                ctx.fillText(`Shared Map State:`, 15, 290);
+                ctx.fillText(`Coins: ${coins.filter(c => !c.collected).length}`, 15, 305);
+                ctx.fillText(`Bots: ${bots.filter(b => b.alive).length}`, 15, 320);
+                ctx.fillText(`Fireballs: ${fireballs.length}`, 15, 335);
+                
+                // Draw player
+                if (player.alive) {
+                    drawWizard(player, true);
+                }
+                
+                // Draw UI
+                drawUI();
+                
+                // Draw game over screen if player is dead
+                if (!player.alive) {
+                    drawGameOver();
+                }
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        connectToServer();
+        gameLoop();
+    </script>
+</body>
+</html> 
