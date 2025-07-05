@@ -85,8 +85,7 @@ Other devices on your network can join using your computer's IP address!
 ## Game Files
 
 - `server.js` - Node.js server with WebSocket support
-- `multiplayer.html` - Client-side multiplayer game
-- `index.html` - Single-player version
+- `multiplayer.html` - Client-side multiplayer game (enhanced with all features)
 - `package.json` - Dependencies and scripts
 - `start-server.bat` - Windows startup script
 

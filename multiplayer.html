@@ -19,11 +19,12 @@
         
         #gameContainer {
             position: relative;
-            border: 3px solid #4a90e2;
-            border-radius: 10px;
-            box-shadow: 0 0 30px rgba(74, 144, 226, 0.5);
+            border: 5px solid #4a90e2;
+            border-radius: 15px;
+            box-shadow: 0 0 40px rgba(74, 144, 226, 0.6), inset 0 0 20px rgba(74, 144, 226, 0.2);
             width: 100vw;
             height: 100vh;
+            overflow: hidden;
         }
         
         #gameCanvas {
@@ -94,6 +95,36 @@
             border-radius: 5px;
             max-width: 200px;
         }
+
+        #playerList {
+            position: absolute;
+            top: 110px;
+            left: 10px;
+            color: #ffffff;
+            font-size: 12px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+            min-width: 150px;
+        }
+
+        .player-entry {
+            margin: 2px 0;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+
+        .player-entry.you {
+            background: rgba(74, 144, 226, 0.3);
+            border-left: 3px solid #4a90e2;
+        }
+
+        .player-entry.other {
+            background: rgba(255, 107, 107, 0.3);
+            border-left: 3px solid #ff6b6b;
+        }
     </style>
 </head>
 <body>
@@ -117,6 +148,9 @@
         <div id="notifications">
             Waiting for players...
         </div>
+        <div id="playerList">
+            <div>Players on this map:</div>
+        </div>
     </div>
 
     <script>
@@ -125,17 +159,21 @@
         const connectionStatusElement = document.getElementById('connectionStatus');
         const playerCountElement = document.getElementById('playerCount');
         const notificationsElement = document.getElementById('notifications');
+        const playerListElement = document.getElementById('playerList');
         
         // Game world dimensions
-        const WORLD_WIDTH = 2000;
-        const WORLD_HEIGHT = 1500;
+        const WORLD_WIDTH = 3000;
+        const WORLD_HEIGHT = 2250;
+        
+        // Zoom factor - higher = more zoomed in
+        const ZOOM_FACTOR = 1.7;
         
         // Camera system
         const camera = {
             x: 0,
             y: 0,
-            width: canvas.width,
-            height: canvas.height,
+            width: canvas.width / ZOOM_FACTOR,
+            height: canvas.height / ZOOM_FACTOR,
             
             follow(target) {
                 this.x = target.x - this.width / 2;
@@ -147,8 +185,8 @@
             },
             
             updateSize() {
-                this.width = canvas.width;
-                this.height = canvas.height;
+                this.width = canvas.width / ZOOM_FACTOR;
+                this.height = canvas.height / ZOOM_FACTOR;
             }
         };
         
@@ -227,6 +265,7 @@
                     coins = data.coins;
                     bots = data.bots;
                     updatePlayerCount();
+                    console.log(`Initialized with ${data.players.length} players, ${coins.length} coins, ${bots.length} bots`);
                     break;
                     
                 case 'playerJoined':
@@ -257,6 +296,8 @@
                     coins = data.coins;
                     bots = data.bots;
                     updatePlayerCount();
+                    updatePlayerList();
+                    console.log(`Game update: ${data.players.length} players, ${coins.length} coins, ${bots.length} bots, ${fireballs.length} fireballs`);
                     break;
                     
                 case 'fireballShot':
@@ -283,6 +324,32 @@
         
         function updatePlayerCount() {
             playerCountElement.textContent = `Players: ${otherPlayers.size + 1}`;
+            updatePlayerList();
+        }
+        
+        function updatePlayerList() {
+            if (!playerListElement) return;
+            
+            // Clear existing list
+            playerListElement.innerHTML = '<div>Players on this map:</div>';
+            
+            // Add current player first
+            if (player) {
+                const playerEntry = document.createElement('div');
+                playerEntry.className = 'player-entry you';
+                playerEntry.textContent = `Player 1 (You) - Level ${player.level}`;
+                playerListElement.appendChild(playerEntry);
+            }
+            
+            // Add other players
+            let playerNumber = 2;
+            otherPlayers.forEach((otherPlayer, id) => {
+                const playerEntry = document.createElement('div');
+                playerEntry.className = 'player-entry other';
+                playerEntry.textContent = `Player ${playerNumber} - Level ${otherPlayer.level || 1}`;
+                playerListElement.appendChild(playerEntry);
+                playerNumber++;
+            });
         }
         
         function showNotification(message) {
@@ -306,19 +373,19 @@
                 teleport();
             }
             
-            // Send input to server
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'updateInput',
-                    keys: keys,
-                    mouseX: mouseX,
-                    mouseY: mouseY
-                }));
+            // Calculate direction for aiming
+            let direction = 0;
+            if (player) {
+                const centerX = player.x + player.width / 2;
+                const centerY = player.y + player.height / 2;
+                
+                // Convert mouse screen coordinates to world coordinates
+                const mouseWorldX = mouseX / ZOOM_FACTOR + camera.x;
+                const mouseWorldY = mouseY / ZOOM_FACTOR + camera.y;
+                
+                // Calculate direction from player center to mouse world position
+                direction = Math.atan2(mouseWorldY - centerY, mouseWorldX - centerX);
             }
-        });
-        
-        document.addEventListener('keyup', (e) => {
-            keys[e.key.toLowerCase()] = false;
             
             // Send input to server
             if (ws && ws.readyState === WebSocket.OPEN) {
@@ -326,7 +393,37 @@
                     type: 'updateInput',
                     keys: keys,
                     mouseX: mouseX,
-                    mouseY: mouseY
+                    mouseY: mouseY,
+                    direction: direction
+                }));
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+            
+            // Calculate direction for aiming
+            let direction = 0;
+            if (player) {
+                const centerX = player.x + player.width / 2;
+                const centerY = player.y + player.height / 2;
+                
+                // Convert mouse screen coordinates to world coordinates
+                const mouseWorldX = mouseX / ZOOM_FACTOR + camera.x;
+                const mouseWorldY = mouseY / ZOOM_FACTOR + camera.y;
+                
+                // Calculate direction from player center to mouse world position
+                direction = Math.atan2(mouseWorldY - centerY, mouseWorldX - centerX);
+            }
+            
+            // Send input to server
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'updateInput',
+                    keys: keys,
+                    mouseX: mouseX,
+                    mouseY: mouseY,
+                    direction: direction
                 }));
             }
         });
@@ -336,13 +433,28 @@
             mouseX = e.clientX - rect.left;
             mouseY = e.clientY - rect.top;
             
-            // Send mouse position to server
+            // Calculate direction for aiming
+            let direction = 0;
+            if (player) {
+                const centerX = player.x + player.width / 2;
+                const centerY = player.y + player.height / 2;
+                
+                // Convert mouse screen coordinates to world coordinates
+                const mouseWorldX = mouseX / ZOOM_FACTOR + camera.x;
+                const mouseWorldY = mouseY / ZOOM_FACTOR + camera.y;
+                
+                // Calculate direction from player center to mouse world position
+                direction = Math.atan2(mouseWorldY - centerY, mouseWorldX - centerX);
+            }
+            
+            // Send mouse position and direction to server
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({
                     type: 'updateInput',
                     keys: keys,
                     mouseX: mouseX,
-                    mouseY: mouseY
+                    mouseY: mouseY,
+                    direction: direction
                 }));
             }
         });
@@ -352,15 +464,23 @@
             
             const centerX = player.x + player.width / 2;
             const centerY = player.y + player.height / 2;
-            const direction = Math.atan2(mouseY, mouseX);
-            const staffX = centerX + Math.cos(player.direction) * 25;
-            const staffY = centerY + Math.sin(player.direction) * 25;
+            
+            // Convert mouse screen coordinates to world coordinates
+            const mouseWorldX = mouseX / ZOOM_FACTOR + camera.x;
+            const mouseWorldY = mouseY / ZOOM_FACTOR + camera.y;
+            
+            // Calculate direction from player center to mouse world position
+            const direction = Math.atan2(mouseWorldY - centerY, mouseWorldX - centerX);
+            
+            // Create fireball at player center
+            const fireballX = centerX;
+            const fireballY = centerY;
             
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({
                     type: 'shootFireball',
-                    x: staffX,
-                    y: staffY,
+                    x: fireballX,
+                    y: fireballY,
                     direction: direction,
                     size: player.fireballSize
                 }));
@@ -386,17 +506,17 @@
         
         // Drawing functions
         function drawWizard(wizard, isPlayer = false) {
-            const screenX = wizard.x - camera.x;
-            const screenY = wizard.y - camera.y;
-            const scaleFactor = 1 + Math.log(wizard.level || 1) * 1.5;
+            const screenX = (wizard.x - camera.x) * ZOOM_FACTOR;
+            const screenY = (wizard.y - camera.y) * ZOOM_FACTOR;
+            const scaleFactor = (1 + Math.log(wizard.level || 1) * 1.5) * ZOOM_FACTOR;
             
             ctx.save();
-            ctx.translate(screenX + wizard.width/2, screenY + wizard.height/2);
+            ctx.translate(screenX + wizard.width/2 * ZOOM_FACTOR, screenY + wizard.height/2 * ZOOM_FACTOR);
             
             // Shadow
             ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
             ctx.beginPath();
-            ctx.ellipse(0, 20, 18 * scaleFactor, 6 * scaleFactor, 0, 0, Math.PI * 2);
+            ctx.ellipse(0, 20 * ZOOM_FACTOR, 18 * scaleFactor, 6 * scaleFactor, 0, 0, Math.PI * 2);
             ctx.fill();
             
             // Main body
@@ -413,7 +533,7 @@
             // Direction indicator
             ctx.fillStyle = isPlayer ? '#6a00b0' : wizard.color || '#ff6b6b';
             ctx.beginPath();
-            ctx.ellipse(Math.cos(wizard.direction) * 6, Math.sin(wizard.direction) * 6, 8 * scaleFactor, 12 * scaleFactor, wizard.direction, 0, Math.PI * 2);
+            ctx.ellipse(Math.cos(wizard.direction) * 6 * ZOOM_FACTOR, Math.sin(wizard.direction) * 6 * ZOOM_FACTOR, 8 * scaleFactor, 12 * scaleFactor, wizard.direction, 0, Math.PI * 2);
             ctx.fill();
             
             // Wizard hat
@@ -489,7 +609,7 @@
             // Player name for other players
             if (!isPlayer) {
                 ctx.fillStyle = '#ffffff';
-                ctx.font = '12px Arial';
+                ctx.font = (12 * ZOOM_FACTOR) + 'px Arial';
                 ctx.textAlign = 'center';
                 ctx.fillText('PLAYER', 0, -40 * scaleFactor);
                 ctx.textAlign = 'left';
@@ -499,29 +619,29 @@
         }
         
         function drawFireball(fireball) {
-            const screenX = fireball.x - camera.x;
-            const screenY = fireball.y - camera.y;
+            const screenX = (fireball.x - camera.x) * ZOOM_FACTOR;
+            const screenY = (fireball.y - camera.y) * ZOOM_FACTOR;
             
             // Skip if off screen
-            if (screenX < -50 || screenX > canvas.width + 50 || 
-                screenY < -50 || screenY > canvas.height + 50) return;
+            if (screenX < -50 * ZOOM_FACTOR || screenX > canvas.width + 50 * ZOOM_FACTOR || 
+                screenY < -50 * ZOOM_FACTOR || screenY > canvas.height + 50 * ZOOM_FACTOR) return;
             
             ctx.save();
             ctx.fillStyle = '#ff4444';
             ctx.beginPath();
-            ctx.arc(screenX, screenY, fireball.size, 0, Math.PI * 2);
+            ctx.arc(screenX, screenY, fireball.size * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             // Inner glow
             ctx.fillStyle = '#ff8844';
             ctx.beginPath();
-            ctx.arc(screenX, screenY, fireball.size * 0.7, 0, Math.PI * 2);
+            ctx.arc(screenX, screenY, fireball.size * 0.7 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             // Core
             ctx.fillStyle = '#ffff44';
             ctx.beginPath();
-            ctx.arc(screenX, screenY, fireball.size * 0.4, 0, Math.PI * 2);
+            ctx.arc(screenX, screenY, fireball.size * 0.4 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             ctx.restore();
@@ -530,43 +650,43 @@
         function drawCoin(coin) {
             if (coin.collected) return;
             
-            const screenX = coin.x - camera.x;
-            const screenY = coin.y - camera.y;
+            const screenX = (coin.x - camera.x) * ZOOM_FACTOR;
+            const screenY = (coin.y - camera.y) * ZOOM_FACTOR;
             
             // Skip if off screen
-            if (screenX < -30 || screenX > canvas.width + 30 || 
-                screenY < -30 || screenY > canvas.height + 30) return;
+            if (screenX < -30 * ZOOM_FACTOR || screenX > canvas.width + 30 * ZOOM_FACTOR || 
+                screenY < -30 * ZOOM_FACTOR || screenY > canvas.height + 30 * ZOOM_FACTOR) return;
             
             // Bob animation
-            const bobY = screenY + Math.sin(Date.now() * 0.005 + coin.bobOffset) * 3;
+            const bobY = screenY + Math.sin(Date.now() * 0.005 + coin.bobOffset) * 3 * ZOOM_FACTOR;
             
             // Coin shadow
             ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
             ctx.beginPath();
-            ctx.ellipse(screenX, screenY + 15, 8, 3, 0, 0, Math.PI * 2);
+            ctx.ellipse(screenX, screenY + 15 * ZOOM_FACTOR, 8 * ZOOM_FACTOR, 3 * ZOOM_FACTOR, 0, 0, Math.PI * 2);
             ctx.fill();
             
             // Coin glow
             ctx.fillStyle = 'rgba(255, 215, 0, 0.3)';
             ctx.beginPath();
-            ctx.arc(screenX, bobY, coin.size + 5, 0, Math.PI * 2);
+            ctx.arc(screenX, bobY, coin.size * ZOOM_FACTOR + 5 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             // Main coin
             ctx.fillStyle = '#ffd700';
             ctx.beginPath();
-            ctx.arc(screenX, bobY, coin.size, 0, Math.PI * 2);
+            ctx.arc(screenX, bobY, coin.size * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             // Coin outline
             ctx.strokeStyle = '#b8860b';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 2 * ZOOM_FACTOR;
             ctx.stroke();
             
             // Inner circle
             ctx.fillStyle = '#ffed4e';
             ctx.beginPath();
-            ctx.arc(screenX, bobY, coin.size - 3, 0, Math.PI * 2);
+            ctx.arc(screenX, bobY, coin.size * ZOOM_FACTOR - 3 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             // Coin symbol
@@ -578,14 +698,14 @@
             ctx.beginPath();
             for (let i = 0; i < 5; i++) {
                 const angle = (i * Math.PI * 2) / 5;
-                const x = Math.cos(angle) * 4;
-                const y = Math.sin(angle) * 4;
+                const x = Math.cos(angle) * 4 * ZOOM_FACTOR;
+                const y = Math.sin(angle) * 4 * ZOOM_FACTOR;
                 if (i === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
                 
                 const angle2 = ((i + 0.5) * Math.PI * 2) / 5;
-                const x2 = Math.cos(angle2) * 2;
-                const y2 = Math.sin(angle2) * 2;
+                const x2 = Math.cos(angle2) * 2 * ZOOM_FACTOR;
+                const y2 = Math.sin(angle2) * 2 * ZOOM_FACTOR;
                 ctx.lineTo(x2, y2);
             }
             ctx.closePath();
@@ -597,85 +717,85 @@
         function drawBot(bot) {
             if (!bot.alive) return;
             
-            const screenX = bot.x - camera.x;
-            const screenY = bot.y - camera.y;
+            const screenX = (bot.x - camera.x) * ZOOM_FACTOR;
+            const screenY = (bot.y - camera.y) * ZOOM_FACTOR;
             
             // Skip if off screen
-            if (screenX < -50 || screenX > canvas.width + 50 || 
-                screenY < -50 || screenY > canvas.height + 50) return;
+            if (screenX < -50 * ZOOM_FACTOR || screenX > canvas.width + 50 * ZOOM_FACTOR || 
+                screenY < -50 * ZOOM_FACTOR || screenY > canvas.height + 50 * ZOOM_FACTOR) return;
             
             ctx.save();
-            ctx.translate(screenX + bot.width/2, screenY + bot.height/2);
+            ctx.translate(screenX + bot.width/2 * ZOOM_FACTOR, screenY + bot.height/2 * ZOOM_FACTOR);
             
             // Shadow
             ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
             ctx.beginPath();
-            ctx.ellipse(0, 20, 18, 6, 0, 0, Math.PI * 2);
+            ctx.ellipse(0, 20 * ZOOM_FACTOR, 18 * ZOOM_FACTOR, 6 * ZOOM_FACTOR, 0, 0, Math.PI * 2);
             ctx.fill();
             
             // Main body
             ctx.fillStyle = bot.color || '#ff6b6b';
             ctx.beginPath();
-            ctx.arc(0, 0, 16, 0, Math.PI * 2);
+            ctx.arc(0, 0, 16 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             // Body outline
             ctx.strokeStyle = '#2a0050';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 2 * ZOOM_FACTOR;
             ctx.stroke();
             
             // Direction indicator
             ctx.fillStyle = bot.color || '#ff6b6b';
             ctx.globalAlpha = 0.8;
             ctx.beginPath();
-            ctx.ellipse(Math.cos(bot.direction) * 6, Math.sin(bot.direction) * 6, 8, 12, bot.direction, 0, Math.PI * 2);
+            ctx.ellipse(Math.cos(bot.direction) * 6 * ZOOM_FACTOR, Math.sin(bot.direction) * 6 * ZOOM_FACTOR, 8 * ZOOM_FACTOR, 12 * ZOOM_FACTOR, bot.direction, 0, Math.PI * 2);
             ctx.fill();
             ctx.globalAlpha = 1;
             
             // Wizard hat
             ctx.fillStyle = '#1a0033';
             ctx.beginPath();
-            ctx.moveTo(-8, -16);
-            ctx.lineTo(8, -16);
-            ctx.lineTo(0, -30);
+            ctx.moveTo(-8 * ZOOM_FACTOR, -16 * ZOOM_FACTOR);
+            ctx.lineTo(8 * ZOOM_FACTOR, -16 * ZOOM_FACTOR);
+            ctx.lineTo(0, -30 * ZOOM_FACTOR);
             ctx.closePath();
             ctx.fill();
             
             // Hat outline
             ctx.strokeStyle = '#000';
-            ctx.lineWidth = 1;
+            ctx.lineWidth = 1 * ZOOM_FACTOR;
             ctx.stroke();
             
             // Hat star
             ctx.fillStyle = '#ffff00';
             ctx.beginPath();
-            ctx.arc(0, -23, 2, 0, Math.PI * 2);
+            ctx.arc(0, -23 * ZOOM_FACTOR, 2 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             // Eyes
             ctx.fillStyle = '#fff';
             ctx.beginPath();
-            ctx.arc(-4, -5, 3, 0, Math.PI * 2);
+            ctx.arc(-4 * ZOOM_FACTOR, -5 * ZOOM_FACTOR, 3 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             ctx.beginPath();
-            ctx.arc(4, -5, 3, 0, Math.PI * 2);
+            ctx.arc(4 * ZOOM_FACTOR, -5 * ZOOM_FACTOR, 3 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             // Eye pupils
             ctx.fillStyle = '#000';
             ctx.beginPath();
-            ctx.arc(-4, -5, 1.5, 0, Math.PI * 2);
+            ctx.arc(-4 * ZOOM_FACTOR, -5 * ZOOM_FACTOR, 1.5 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             ctx.beginPath();
-            ctx.arc(4, -5, 1.5, 0, Math.PI * 2);
+            ctx.arc(4 * ZOOM_FACTOR, -5 * ZOOM_FACTOR, 1.5 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             // Staff
-            const staffLength = 25;
+            const staffLength = 25 * ZOOM_FACTOR;
             const staffEndX = Math.cos(bot.direction) * staffLength;
             const staffEndY = Math.sin(bot.direction) * staffLength;
             ctx.strokeStyle = '#8b4513';
-            ctx.lineWidth = 3;
+            ctx.lineWidth = 3 * ZOOM_FACTOR;
             ctx.beginPath();
             ctx.moveTo(0, 0);
             ctx.lineTo(staffEndX, staffEndY);
@@ -684,28 +804,28 @@
             // Staff orb
             ctx.fillStyle = '#ff6b6b';
             ctx.beginPath();
-            ctx.arc(staffEndX, staffEndY, 5, 0, Math.PI * 2);
+            ctx.arc(staffEndX, staffEndY, 5 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             // Orb glow
             ctx.fillStyle = 'rgba(255, 107, 107, 0.4)';
             ctx.beginPath();
-            ctx.arc(staffEndX, staffEndY, 8, 0, Math.PI * 2);
+            ctx.arc(staffEndX, staffEndY, 8 * ZOOM_FACTOR, 0, Math.PI * 2);
             ctx.fill();
             
             // Directional arrow
             ctx.fillStyle = '#ffff00';
             ctx.beginPath();
-            ctx.moveTo(Math.cos(bot.direction) * 10, Math.sin(bot.direction) * 10);
-            ctx.lineTo(Math.cos(bot.direction + 2.5) * 6, Math.sin(bot.direction + 2.5) * 6);
-            ctx.lineTo(Math.cos(bot.direction - 2.5) * 6, Math.sin(bot.direction - 2.5) * 6);
+            ctx.moveTo(Math.cos(bot.direction) * 10 * ZOOM_FACTOR, Math.sin(bot.direction) * 10 * ZOOM_FACTOR);
+            ctx.lineTo(Math.cos(bot.direction + 2.5) * 6 * ZOOM_FACTOR, Math.sin(bot.direction + 2.5) * 6 * ZOOM_FACTOR);
+            ctx.lineTo(Math.cos(bot.direction - 2.5) * 6 * ZOOM_FACTOR, Math.sin(bot.direction - 2.5) * 6 * ZOOM_FACTOR);
             ctx.closePath();
             ctx.fill();
             
             // Bot indicator
             ctx.fillStyle = '#ff0000';
-            ctx.font = '12px Arial';
-            ctx.fillText('BOT', -15, -35);
+            ctx.font = (12 * ZOOM_FACTOR) + 'px Arial';
+            ctx.fillText('BOT', -15 * ZOOM_FACTOR, -35 * ZOOM_FACTOR);
             
             ctx.restore();
         }
@@ -796,6 +916,22 @@
             ctx.textAlign = 'left';
         }
         
+        function drawFrame() {
+            // Draw a frame around the visible game area to show zoom boundaries
+            ctx.strokeStyle = '#4a90e2';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([10, 5]);
+            ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
+            ctx.setLineDash([]);
+            
+            // Add corner indicators
+            ctx.fillStyle = '#4a90e2';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('ZOOMED VIEW', canvas.width / 2, 25);
+            ctx.textAlign = 'left';
+        }
+        
         function gameLoop() {
             // Clear canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -803,6 +939,9 @@
             // Draw background
             ctx.fillStyle = '#0f1419';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw frame to show zoom boundaries
+            drawFrame();
             
             if (player) {
                 // Update camera to follow player

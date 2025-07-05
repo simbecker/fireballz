@@ -8,17 +8,17 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// Serve static files
-app.use(express.static(path.join(__dirname)));
-
-// Serve index.html as default page
+// Serve multiplayer.html as default page
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(path.join(__dirname, 'multiplayer.html'));
 });
 
+// Serve static files (after routes)
+app.use(express.static(path.join(__dirname)));
+
 // Game world dimensions
-const WORLD_WIDTH = 2000;
-const WORLD_HEIGHT = 1500;
+const WORLD_WIDTH = 3000;
+const WORLD_HEIGHT = 2250;
 
 // Game state
 const players = new Map();
@@ -51,7 +51,7 @@ function generateBots() {
             y: Math.random() * (WORLD_HEIGHT - 100) + 50,
             width: 32,
             height: 32,
-            speed: 2.5,
+            speed: 5,
             health: 2,
             maxHealth: 2,
             direction: Math.random() * Math.PI * 2,
@@ -82,8 +82,8 @@ wss.on('connection', (ws) => {
         height: 32,
         baseWidth: 32,
         baseHeight: 32,
-        speed: 4,
-        minSpeed: 2,
+        speed: 8,
+        minSpeed: 4,
         health: 100,
         maxHealth: 100,
         direction: 0,
@@ -94,6 +94,8 @@ wss.on('connection', (ws) => {
         teleportCooldown: 0,
         teleportMaxCooldown: 180,
         teleportDistance: 120,
+        shootCooldown: 0,
+        shootMaxCooldown: 12, // 200ms at 60 FPS
         alive: true,
         mouseX: 0,
         mouseY: 0,
@@ -116,12 +118,16 @@ wss.on('connection', (ws) => {
         worldHeight: WORLD_HEIGHT
     }));
     
-    // Broadcast new player to all other players
+    // Broadcast updated game state to ALL players (including the new one)
+    // This ensures everyone has the same shared state
     wss.clients.forEach((client) => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
+        if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify({
-                type: 'playerJoined',
-                player: player
+                type: 'gameUpdate',
+                players: Array.from(players.values()),
+                fireballs: fireballs,
+                coins: coins.filter(coin => !coin.collected),
+                bots: bots.filter(bot => bot.alive)
             }));
         }
     });
@@ -138,35 +144,43 @@ wss.on('connection', (ws) => {
                         player.keys = data.keys || {};
                         player.mouseX = data.mouseX || 0;
                         player.mouseY = data.mouseY || 0;
+                        if (typeof data.direction === 'number') {
+                            player.direction = data.direction;
+                        }
                     }
                     break;
                     
                 case 'shootFireball':
                     if (players.has(playerId)) {
                         const player = players.get(playerId);
-                        const fireball = {
-                            id: uuidv4(),
-                            x: data.x,
-                            y: data.y,
-                            direction: data.direction,
-                            speed: 8,
-                            size: data.size || 12,
-                            lifetime: 120,
-                            isPlayerFireball: true,
-                            playerId: playerId,
-                            damage: 1
-                        };
-                        fireballs.push(fireball);
-                        
-                        // Broadcast fireball to all players
-                        wss.clients.forEach((client) => {
-                            if (client.readyState === WebSocket.OPEN) {
-                                client.send(JSON.stringify({
-                                    type: 'fireballShot',
-                                    fireball: fireball
-                                }));
-                            }
-                        });
+                        if (player.shootCooldown <= 0) {
+                            const fireball = {
+                                id: uuidv4(),
+                                x: data.x,
+                                y: data.y,
+                                direction: data.direction,
+                                speed: 8,
+                                size: data.size || 12,
+                                lifetime: 120,
+                                isPlayerFireball: true,
+                                playerId: playerId,
+                                damage: 1 + (player.level - 1)
+                            };
+                            fireballs.push(fireball);
+                            
+                            // Set shooting cooldown
+                            player.shootCooldown = player.shootMaxCooldown;
+                            
+                            // Broadcast fireball to all players
+                            wss.clients.forEach((client) => {
+                                if (client.readyState === WebSocket.OPEN) {
+                                    client.send(JSON.stringify({
+                                        type: 'fireballShot',
+                                        fireball: fireball
+                                    }));
+                                }
+                            });
+                        }
                     }
                     break;
                     
@@ -239,18 +253,23 @@ setInterval(() => {
         player.x = Math.max(0, Math.min(player.x + dx, WORLD_WIDTH - player.width));
         player.y = Math.max(0, Math.min(player.y + dy, WORLD_HEIGHT - player.height));
         
-        // Update player direction based on mouse
-        player.direction = Math.atan2(player.mouseY, player.mouseX);
-        
         // Check coin collection
         coins.forEach(coin => {
             if (!coin.collected) {
-                const distanceX = (player.x + player.width / 2) - coin.x;
-                const distanceY = (player.y + player.height / 2) - coin.y;
-                const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
-                const collectionRadius = 20 + (player.width - player.baseWidth) * 0.3;
+                // Check if coin intersects with player's body rectangle
+                const playerLeft = player.x;
+                const playerRight = player.x + player.width;
+                const playerTop = player.y;
+                const playerBottom = player.y + player.height;
                 
-                if (distance < collectionRadius) {
+                const coinLeft = coin.x - coin.size;
+                const coinRight = coin.x + coin.size;
+                const coinTop = coin.y - coin.size;
+                const coinBottom = coin.y + coin.size;
+                
+                // Check for rectangle intersection
+                if (playerLeft < coinRight && playerRight > coinLeft && 
+                    playerTop < coinBottom && playerBottom > coinTop) {
                     coin.collected = true;
                     player.coins++;
                     
@@ -287,6 +306,11 @@ setInterval(() => {
         // Update teleport cooldown
         if (player.teleportCooldown > 0) {
             player.teleportCooldown--;
+        }
+        
+        // Update shooting cooldown
+        if (player.shootCooldown > 0) {
+            player.shootCooldown--;
         }
     });
     
@@ -344,6 +368,23 @@ setInterval(() => {
                     }
                 }
             }
+            // Player fireball hits other players
+            for (const [otherId, otherPlayer] of players.entries()) {
+                if (otherPlayer.alive && otherId !== fireball.playerId) {
+                    const distance = Math.sqrt(
+                        Math.pow(fireball.x - (otherPlayer.x + otherPlayer.width/2), 2) +
+                        Math.pow(fireball.y - (otherPlayer.y + otherPlayer.height/2), 2)
+                    );
+                    if (distance < fireball.size) {
+                        otherPlayer.health -= fireball.damage;
+                        if (otherPlayer.health <= 0) {
+                            otherPlayer.alive = false;
+                        }
+                        shouldRemove = true;
+                        break;
+                    }
+                }
+            }
         } else {
             // Bot fireball hits players
             for (let j = 0; j < players.size; j++) {
@@ -385,9 +426,10 @@ setInterval(() => {
     bots.forEach(bot => {
         if (!bot.alive) return;
         
-        // Simple AI: move towards nearest coin or player
+        // Simple AI: move towards nearest coin or player, or wander randomly
         let targetX = bot.x;
         let targetY = bot.y;
+        let hasTarget = false;
         
         // Find nearest coin
         let nearestCoin = null;
@@ -407,6 +449,7 @@ setInterval(() => {
         if (nearestCoin && nearestDistance < 150) {
             targetX = nearestCoin.x;
             targetY = nearestCoin.y;
+            hasTarget = true;
         } else {
             // Move towards nearest player
             let nearestPlayer = null;
@@ -427,7 +470,21 @@ setInterval(() => {
             if (nearestPlayer && nearestPlayerDistance < 200) {
                 targetX = nearestPlayer.x + nearestPlayer.width/2;
                 targetY = nearestPlayer.y + nearestPlayer.height/2;
+                hasTarget = true;
             }
+        }
+        
+        // If no specific target, wander randomly
+        if (!hasTarget) {
+            // Change wandering direction occasionally
+            if (!bot.wanderTarget || Math.random() < 0.02) {
+                bot.wanderTarget = {
+                    x: Math.random() * (WORLD_WIDTH - 100) + 50,
+                    y: Math.random() * (WORLD_HEIGHT - 100) + 50
+                };
+            }
+            targetX = bot.wanderTarget.x;
+            targetY = bot.wanderTarget.y;
         }
         
         // Move towards target
@@ -447,14 +504,14 @@ setInterval(() => {
         
         // Shoot at players
         bot.lastShot++;
-        if (bot.lastShot >= bot.shootCooldown) {
+        if (bot.lastShot >= bot.shootCooldown && Math.random() < 1.0) {
             players.forEach(player => {
                 if (player.alive) {
                     const distance = Math.sqrt(
                         Math.pow(bot.x - (player.x + player.width/2), 2) + 
                         Math.pow(bot.y - (player.y + player.height/2), 2)
                     );
-                    if (distance < 200) {
+                    if (distance < 300) {
                         const direction = Math.atan2(
                             (player.y + player.height/2) - bot.y,
                             (player.x + player.width/2) - bot.x
@@ -517,7 +574,7 @@ setInterval(() => {
             y: Math.random() * (WORLD_HEIGHT - 100) + 50,
             width: 32,
             height: 32,
-            speed: 2.5,
+            speed: 5,
             health: 2,
             maxHealth: 2,
             direction: Math.random() * Math.PI * 2,
