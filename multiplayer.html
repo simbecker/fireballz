@@ -128,6 +128,15 @@
     </style>
 </head>
 <body>
+    <div id="nicknameOverlay" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:200;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+      <div style="background:#222;padding:32px 24px;border-radius:12px;box-shadow:0 0 24px #0006;display:flex;flex-direction:column;align-items:center;">
+        <h2 style="color:#fff;margin-bottom:16px;">Enter your nickname</h2>
+        <input id="nicknameInput" type="text" maxlength="16" style="font-size:20px;padding:8px 12px;border-radius:6px;border:none;outline:none;width:220px;text-align:center;" />
+        <div style="margin:16px 0 8px 0;color:#fff;">Choose your color:</div>
+        <div id="colorChoices" style="display:flex;gap:10px;margin-bottom:10px;"></div>
+        <button id="nicknameBtn" style="margin-top:8px;font-size:18px;padding:8px 24px;border-radius:6px;border:none;background:#4a90e2;color:#fff;cursor:pointer;">Start</button>
+      </div>
+    </div>
     <div id="gameContainer">
         <canvas id="gameCanvas"></canvas>
         <div id="instructions">
@@ -226,6 +235,8 @@
                 connectionStatusElement.textContent = 'Connected';
                 connectionStatusElement.className = 'connected';
                 console.log('Connected to server');
+                // Send join message with nickname and color
+                ws.send(JSON.stringify({ type: 'join', nickname: nickname, color: playerColor }));
             };
             
             ws.onclose = () => {
@@ -254,6 +265,7 @@
                 case 'init':
                     playerId = data.playerId;
                     player = data.players.find(p => p.id === playerId);
+                    // No local assignment of nickname/color here; use server values
                     
                     // Add other players
                     data.players.forEach(p => {
@@ -337,7 +349,8 @@
             if (player) {
                 const playerEntry = document.createElement('div');
                 playerEntry.className = 'player-entry you';
-                playerEntry.textContent = `Player 1 (You) - Level ${player.level}`;
+                playerEntry.textContent = `${player.nickname || 'Player ' + (otherPlayers.size + 1)} (You) - Level ${player.level}`;
+                playerEntry.style.color = player.color || playerColor; // Use server color or default
                 playerListElement.appendChild(playerEntry);
             }
             
@@ -346,7 +359,8 @@
             otherPlayers.forEach((otherPlayer, id) => {
                 const playerEntry = document.createElement('div');
                 playerEntry.className = 'player-entry other';
-                playerEntry.textContent = `Player ${playerNumber} - Level ${otherPlayer.level || 1}`;
+                playerEntry.textContent = `${otherPlayer.nickname || 'Player ' + playerNumber} - Level ${otherPlayer.level || 1}`;
+                playerEntry.style.color = otherPlayer.color || '#fff';
                 playerListElement.appendChild(playerEntry);
                 playerNumber++;
             });
@@ -520,7 +534,7 @@
             ctx.fill();
             
             // Main body
-            ctx.fillStyle = isPlayer ? '#4a0080' : wizard.color || '#ff6b6b';
+            ctx.fillStyle = isPlayer ? playerColor : (wizard.color || '#ff6b6b');
             ctx.beginPath();
             ctx.arc(0, 0, 16 * scaleFactor, 0, Math.PI * 2);
             ctx.fill();
@@ -606,14 +620,12 @@
             ctx.closePath();
             ctx.fill();
             
-            // Player name for other players
-            if (!isPlayer) {
-                ctx.fillStyle = '#ffffff';
-                ctx.font = (12 * ZOOM_FACTOR) + 'px Arial';
-                ctx.textAlign = 'center';
-                ctx.fillText('PLAYER', 0, -40 * scaleFactor);
-                ctx.textAlign = 'left';
-            }
+            // Player name for all players
+            ctx.fillStyle = isPlayer ? playerColor : (wizard.color || '#ffffff');
+            ctx.font = (14 * ZOOM_FACTOR) + 'px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(wizard.nickname || 'PLAYER', 0, -40 * scaleFactor);
+            ctx.textAlign = 'left';
             
             ctx.restore();
         }
@@ -1004,9 +1016,52 @@
             requestAnimationFrame(gameLoop);
         }
         
-        // Start the game
-        connectToServer();
-        gameLoop();
+        // Nickname and color logic
+        function randomNickname() {
+            const adjectives = ["Swift", "Mighty", "Clever", "Brave", "Funky", "Witty", "Sneaky", "Lucky", "Wild", "Chill"];
+            const wizards = ["Wizard", "Mage", "Sorcerer", "Witch", "Enchanter", "Warlock", "Sage", "Seer", "Invoker", "Conjurer"];
+            return adjectives[Math.floor(Math.random()*adjectives.length)] + wizards[Math.floor(Math.random()*wizards.length)] + Math.floor(Math.random()*100);
+        }
+        const colorOptions = ["#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#feca57", "#a259f7", "#e17055", "#00b894", "#fdcb6e", "#0984e3"];
+        let nickname = "";
+        let playerColor = colorOptions[Math.floor(Math.random()*colorOptions.length)];
+        window.addEventListener('DOMContentLoaded', () => {
+            const overlay = document.getElementById('nicknameOverlay');
+            const input = document.getElementById('nicknameInput');
+            const btn = document.getElementById('nicknameBtn');
+            const colorChoices = document.getElementById('colorChoices');
+            const placeholder = randomNickname();
+            input.placeholder = placeholder;
+            input.value = placeholder;
+            input.focus();
+            // Render color choices
+            colorChoices.innerHTML = "";
+            colorOptions.forEach(color => {
+                const swatch = document.createElement('div');
+                swatch.style.background = color;
+                swatch.style.width = '32px';
+                swatch.style.height = '32px';
+                swatch.style.borderRadius = '50%';
+                swatch.style.border = color === playerColor ? '3px solid #fff' : '2px solid #444';
+                swatch.style.cursor = 'pointer';
+                swatch.onclick = () => {
+                    playerColor = color;
+                    // Update border highlight
+                    Array.from(colorChoices.children).forEach(child => child.style.border = '2px solid #444');
+                    swatch.style.border = '3px solid #fff';
+                };
+                colorChoices.appendChild(swatch);
+            });
+            btn.onclick = () => {
+                nickname = input.value.trim() || placeholder;
+                overlay.style.display = 'none';
+                connectToServer();
+                gameLoop();
+            };
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') btn.onclick();
+            });
+        });
     </script>
 </body>
 </html> 

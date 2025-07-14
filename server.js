@@ -72,8 +72,7 @@ generateBots();
 // WebSocket connection handling
 wss.on('connection', (ws) => {
     const playerId = uuidv4();
-    
-    // Create new player
+    // Create new player with placeholder nickname/color
     const player = {
         id: playerId,
         x: Math.random() * (WORLD_WIDTH - 100) + 50,
@@ -99,45 +98,50 @@ wss.on('connection', (ws) => {
         alive: true,
         mouseX: 0,
         mouseY: 0,
-        keys: {}
+        keys: {},
+        nickname: 'Player',
+        color: '#ff6b6b'
     };
-    
     players.set(playerId, player);
     
     console.log(`Player ${playerId} connected. Total players: ${players.size}`);
     console.log(`Current game state: ${coins.filter(c => !c.collected).length} coins, ${bots.filter(b => b.alive).length} bots, ${fireballs.length} fireballs`);
     
-    // Send initial game state to new player
-    ws.send(JSON.stringify({
-        type: 'init',
-        playerId: playerId,
-        players: Array.from(players.values()),
-        coins: coins,
-        bots: bots,
-        worldWidth: WORLD_WIDTH,
-        worldHeight: WORLD_HEIGHT
-    }));
-    
-    // Broadcast updated game state to ALL players (including the new one)
-    // This ensures everyone has the same shared state
-    wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({
-                type: 'gameUpdate',
-                players: Array.from(players.values()),
-                fireballs: fireballs,
-                coins: coins.filter(coin => !coin.collected),
-                bots: bots.filter(bot => bot.alive)
-            }));
-        }
-    });
-    
-    // Handle incoming messages
+    // Wait for join message to set nickname/color
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-            
             switch (data.type) {
+                case 'join':
+                    if (players.has(playerId)) {
+                        const p = players.get(playerId);
+                        p.nickname = data.nickname || 'Player';
+                        p.color = data.color || '#ff6b6b';
+                    }
+                    // Send initial game state to new player
+                    ws.send(JSON.stringify({
+                        type: 'init',
+                        playerId: playerId,
+                        players: Array.from(players.values()),
+                        coins: coins,
+                        bots: bots,
+                        worldWidth: WORLD_WIDTH,
+                        worldHeight: WORLD_HEIGHT
+                    }));
+                    // Broadcast updated game state to all
+                    wss.clients.forEach((client) => {
+                        if (client.readyState === WebSocket.OPEN) {
+                            client.send(JSON.stringify({
+                                type: 'gameUpdate',
+                                players: Array.from(players.values()),
+                                fireballs: fireballs,
+                                coins: coins.filter(coin => !coin.collected),
+                                bots: bots.filter(bot => bot.alive)
+                            }));
+                        }
+                    });
+                    break;
+                    
                 case 'updateInput':
                     if (players.has(playerId)) {
                         const player = players.get(playerId);
@@ -277,8 +281,8 @@ setInterval(() => {
                     if (player.coins >= player.coinsToNextLevel) {
                         player.level++;
                         player.coinsToNextLevel += 10;
-                        player.maxHealth += 3;
-                        player.health += 3;
+                        player.maxHealth = Math.min(100, player.maxHealth + 3);
+                        player.health = Math.min(100, player.health + 3);
                         const scaleFactor = 1 + Math.log(player.level) * 1.5;
                         player.width = player.baseWidth * scaleFactor;
                         player.height = player.baseHeight * scaleFactor;
