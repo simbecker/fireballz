@@ -164,7 +164,7 @@ wss.on('connection', (ws) => {
                                 lifetime: 120,
                                 isPlayerFireball: true,
                                 playerId: playerId,
-                                damage: 1 + (player.level - 1)
+                                damage: Math.floor(Math.log(player.level)*5 + 1)
                             };
                             fireballs.push(fireball);
                             
@@ -277,6 +277,8 @@ setInterval(() => {
                     if (player.coins >= player.coinsToNextLevel) {
                         player.level++;
                         player.coinsToNextLevel += 10;
+                        player.maxHealth += 3;
+                        player.health += 3;
                         const scaleFactor = 1 + Math.log(player.level) * 1.5;
                         player.width = player.baseWidth * scaleFactor;
                         player.height = player.baseHeight * scaleFactor;
@@ -552,7 +554,7 @@ setInterval(() => {
     // Regenerate coins if needed
     const activeCoins = coins.filter(coin => !coin.collected).length;
     if (activeCoins < 20) {
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 15; i++) {
             coins.push({
                 id: uuidv4(),
                 x: Math.random() * (WORLD_WIDTH - 40) + 20,
